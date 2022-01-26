@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\SFML.Audio\SFML.Audio.csproj" />
+    <ProjectReference Include="..\src\SFML.Graphics\SFML.Graphics.csproj" />
+    <ProjectReference Include="..\src\SFML.System\SFML.System.csproj" />
+    <ProjectReference Include="..\src\SFML.Window\SFML.Window.csproj" />
+  </ItemGroup>
+
+</Project>
