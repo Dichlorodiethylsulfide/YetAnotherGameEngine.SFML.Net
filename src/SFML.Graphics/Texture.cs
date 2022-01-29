@@ -484,7 +484,7 @@ namespace SFML.Graphics
         static extern IntPtr sfTexture_create(uint width, uint height);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern IntPtr sfTexture_createFromFile(string filename, ref IntRect area);
+        public static extern IntPtr sfTexture_createFromFile(string filename, ref IntRect area);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
         static extern IntPtr sfTexture_createFromStream(IntPtr stream, ref IntRect area);
@@ -502,7 +502,7 @@ namespace SFML.Graphics
         static extern void sfTexture_destroy(IntPtr texture);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern Vector2u sfTexture_getSize(IntPtr texture);
+        public static extern Vector2u sfTexture_getSize(IntPtr texture);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
         static extern IntPtr sfTexture_copyToImage(IntPtr texture);

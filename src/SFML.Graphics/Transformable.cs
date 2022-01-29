@@ -133,7 +133,7 @@ namespace SFML.Graphics
         /// The combined transform of the object
         /// </summary>
         ////////////////////////////////////////////////////////////
-        public Transform Transform
+        public SFMLTransform Transform
         {
             get
             {
@@ -151,7 +151,7 @@ namespace SFML.Graphics
                     float tx = -myOrigin.X * sxc - myOrigin.Y * sys + myPosition.X;
                     float ty = myOrigin.X * sxs - myOrigin.Y * syc + myPosition.Y;
 
-                    myTransform = new Transform(sxc, sys, tx,
+                    myTransform = new SFMLTransform(sxc, sys, tx,
                                                 -sxs, syc, ty,
                                                 0.0F, 0.0F, 1.0F);
                 }
@@ -164,7 +164,7 @@ namespace SFML.Graphics
         /// The combined transform of the object
         /// </summary>
         ////////////////////////////////////////////////////////////
-        public Transform InverseTransform
+        public SFMLTransform InverseTransform
         {
             get
             {
@@ -204,8 +204,8 @@ namespace SFML.Graphics
         private Vector2f myPosition = new Vector2f(0, 0);
         private float myRotation = 0;
         private Vector2f myScale = new Vector2f(1, 1);
-        private Transform myTransform;
-        private Transform myInverseTransform;
+        private SFMLTransform myTransform;
+        private SFMLTransform myInverseTransform;
         private bool myTransformNeedUpdate = true;
         private bool myInverseNeedUpdate = true;
     }

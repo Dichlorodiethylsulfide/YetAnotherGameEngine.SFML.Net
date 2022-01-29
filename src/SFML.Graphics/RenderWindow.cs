@@ -583,6 +583,26 @@ namespace SFML.Graphics
             }
         }
 
+        public void Draw(Vertex4 vertices, uint start, uint count, PrimitiveType type, RenderStates states)
+        {
+            RenderStates.MarshalData marshaledStates = states.Marshal();
+            unsafe
+            {
+                Vertex* vertexPtr = (Vertex*)&vertices;
+                //Console.WriteLine(*vertexPtr);
+                sfRenderWindow_drawPrimitives(CPointer, vertexPtr + start, count, type, ref marshaledStates);
+            }
+        }
+
+        public struct Vertex4
+        {
+            public Vertex Vertex0;
+            public Vertex Vertex1;
+            public Vertex Vertex2;
+            public Vertex Vertex3;
+        }
+
+
         ////////////////////////////////////////////////////////////
         /// <summary>
         /// Save the current OpenGL render states and matrices.

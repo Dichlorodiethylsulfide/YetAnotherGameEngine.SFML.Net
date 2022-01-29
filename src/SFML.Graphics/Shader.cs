@@ -595,7 +595,7 @@ namespace SFML.Graphics
         /// <param name="transform">Transform to assign</param>
         ////////////////////////////////////////////////////////////
         [Obsolete("SetParameter is deprecated, please use the corresponding SetUniform")]
-        public void SetParameter(string name, Transform transform)
+        public void SetParameter(string name, SFMLTransform transform)
         {
             sfShader_setTransformParameter(CPointer, name, transform);
         }
@@ -834,7 +834,7 @@ namespace SFML.Graphics
         static extern void sfShader_setColorParameter(IntPtr shader, string name, Color color);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity, Obsolete]
-        static extern void sfShader_setTransformParameter(IntPtr shader, string name, Transform transform);
+        static extern void sfShader_setTransformParameter(IntPtr shader, string name, SFMLTransform transform);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity, Obsolete]
         static extern void sfShader_setTextureParameter(IntPtr shader, string name, IntPtr texture);

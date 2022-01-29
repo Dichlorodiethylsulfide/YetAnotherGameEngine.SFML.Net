@@ -11,7 +11,7 @@ namespace SFML.Graphics
     /// </summary>
     ////////////////////////////////////////////////////////////
     [StructLayout(LayoutKind.Sequential)]
-    public struct Transform
+    public struct SFMLTransform
     {
         ////////////////////////////////////////////////////////////
         /// <summary>
@@ -27,7 +27,7 @@ namespace SFML.Graphics
         /// <param name="a21">Element (2, 1) of the matrix</param>
         /// <param name="a22">Element (2, 2) of the matrix</param>
         ////////////////////////////////////////////////////////////
-        public Transform(float a00, float a01, float a02,
+        public SFMLTransform(float a00, float a01, float a02,
                          float a10, float a11, float a12,
                          float a20, float a21, float a22)
         {
@@ -51,7 +51,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <returns>A new transform which is the inverse of self</returns>
         ////////////////////////////////////////////////////////////
-        public Transform GetInverse()
+        public SFMLTransform GetInverse()
         {
             return sfTransform_getInverse(ref this);
         }
@@ -109,7 +109,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="transform">Transform to combine to this transform</param>
         ////////////////////////////////////////////////////////////
-        public void Combine(Transform transform)
+        public void Combine(SFMLTransform transform)
         {
             sfTransform_combine(ref this, ref transform);
         }
@@ -249,7 +249,7 @@ namespace SFML.Graphics
         /// <param name="obj">Object to check</param>
         /// <returns>Object and transform are equal</returns>
         ////////////////////////////////////////////////////////////
-        public override bool Equals(object obj) => (obj is Transform) && Equals((Transform)obj);
+        public override bool Equals(object obj) => (obj is SFMLTransform) && Equals((SFMLTransform)obj);
 
         ////////////////////////////////////////////////////////////
         /// <summary>
@@ -261,7 +261,7 @@ namespace SFML.Graphics
         /// <param name="transform">Transform to check</param>
         /// <returns>Transforms are equal</returns>
         ////////////////////////////////////////////////////////////
-        public bool Equals(Transform transform)
+        public bool Equals(SFMLTransform transform)
         {
             return sfTransform_equal(ref this, ref transform);
         }
@@ -289,7 +289,7 @@ namespace SFML.Graphics
         /// <param name="right">Right operand (the second transform)</param>
         /// <returns>New combined transform</returns>
         ////////////////////////////////////////////////////////////
-        public static Transform operator *(Transform left, Transform right)
+        public static SFMLTransform operator *(SFMLTransform left, SFMLTransform right)
         {
             left.Combine(right);
             return left;
@@ -304,7 +304,7 @@ namespace SFML.Graphics
         /// <param name="right">Right operand (the point to transform)</param>
         /// <returns>New transformed point</returns>
         ////////////////////////////////////////////////////////////
-        public static Vector2f operator *(Transform left, Vector2f right)
+        public static Vector2f operator *(SFMLTransform left, Vector2f right)
         {
             return left.TransformPoint(right);
         }
@@ -312,11 +312,11 @@ namespace SFML.Graphics
         ////////////////////////////////////////////////////////////
         /// <summary>The identity transform (does nothing)</summary>
         ////////////////////////////////////////////////////////////
-        public static Transform Identity
+        public static SFMLTransform Identity
         {
             get
             {
-                return new Transform(1, 0, 0,
+                return new SFMLTransform(1, 0, 0,
                                      0, 1, 0,
                                      0, 0, 1);
             }
@@ -346,34 +346,34 @@ namespace SFML.Graphics
 
         #region Imports
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern Transform sfTransform_getInverse(ref Transform transform);
+        static extern SFMLTransform sfTransform_getInverse(ref SFMLTransform transform);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern Vector2f sfTransform_transformPoint(ref Transform transform, Vector2f point);
+        static extern Vector2f sfTransform_transformPoint(ref SFMLTransform transform, Vector2f point);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern FloatRect sfTransform_transformRect(ref Transform transform, FloatRect rectangle);
+        static extern FloatRect sfTransform_transformRect(ref SFMLTransform transform, FloatRect rectangle);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern void sfTransform_combine(ref Transform transform, ref Transform other);
+        static extern void sfTransform_combine(ref SFMLTransform transform, ref SFMLTransform other);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern void sfTransform_translate(ref Transform transform, float x, float y);
+        static extern void sfTransform_translate(ref SFMLTransform transform, float x, float y);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern void sfTransform_rotate(ref Transform transform, float angle);
+        static extern void sfTransform_rotate(ref SFMLTransform transform, float angle);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern void sfTransform_rotateWithCenter(ref Transform transform, float angle, float centerX, float centerY);
+        static extern void sfTransform_rotateWithCenter(ref SFMLTransform transform, float angle, float centerX, float centerY);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern void sfTransform_scale(ref Transform transform, float scaleX, float scaleY);
+        static extern void sfTransform_scale(ref SFMLTransform transform, float scaleX, float scaleY);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern void sfTransform_scaleWithCenter(ref Transform transform, float scaleX, float scaleY, float centerX, float centerY);
+        static extern void sfTransform_scaleWithCenter(ref SFMLTransform transform, float scaleX, float scaleY, float centerX, float centerY);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern bool sfTransform_equal(ref Transform left, ref Transform right);
+        static extern bool sfTransform_equal(ref SFMLTransform left, ref SFMLTransform right);
         #endregion
     }
 }

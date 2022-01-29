@@ -426,11 +426,11 @@ namespace SFML.Graphics.Glsl
 
         ////////////////////////////////////////////////////////////
         /// <summary>
-        /// Construct the <see cref="Mat3"/> from a SFML <see cref="Transform"/>
+        /// Construct the <see cref="Mat3"/> from a SFML <see cref="SFMLTransform"/>
         /// </summary>
-        /// <param name="transform">A SFML <see cref="Transform"/></param>
+        /// <param name="transform">A SFML <see cref="SFMLTransform"/></param>
         ////////////////////////////////////////////////////////////
-        public Mat3(Transform transform)
+        public Mat3(SFMLTransform transform)
         {
             fixed (float* m = array)
             {
@@ -516,11 +516,11 @@ namespace SFML.Graphics.Glsl
 
         ////////////////////////////////////////////////////////////
         /// <summary>
-        /// Construct the <see cref="Mat3"/> from a SFML <see cref="Transform"/> and expand it to a 4x4 matrix
+        /// Construct the <see cref="Mat3"/> from a SFML <see cref="SFMLTransform"/> and expand it to a 4x4 matrix
         /// </summary>
-        /// <param name="transform">A SFML <see cref="Transform"/></param>
+        /// <param name="transform">A SFML <see cref="SFMLTransform"/></param>
         ////////////////////////////////////////////////////////////
-        public Mat4(Transform transform)
+        public Mat4(SFMLTransform transform)
         {
             fixed (float* m = array)
             {

@@ -12,12 +12,23 @@ namespace SFML.Graphics
     {
         ////////////////////////////////////////////////////////////
         /// <summary>
+        /// Construct a default set of render states with an IntPtr for direct texture passing to C
+        /// </summary>
+        /// <param name="cTexture">C# IntPtr to pass to C</param>
+        ////////////////////////////////////////////////////////////
+        public RenderStates(IntPtr cTexture) :
+            this(BlendMode.Alpha, SFMLTransform.Identity, null, null, cTexture)
+        {
+        }
+
+        ////////////////////////////////////////////////////////////
+        /// <summary>
         /// Construct a default set of render states with a custom blend mode
         /// </summary>
         /// <param name="blendMode">Blend mode to use</param>
         ////////////////////////////////////////////////////////////
         public RenderStates(BlendMode blendMode) :
-            this(blendMode, Transform.Identity, null, null)
+            this(blendMode, SFMLTransform.Identity, null, null, IntPtr.Zero)
         {
         }
 
@@ -27,8 +38,8 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="transform">Transform to use</param>
         ////////////////////////////////////////////////////////////
-        public RenderStates(Transform transform) :
-            this(BlendMode.Alpha, transform, null, null)
+        public RenderStates(SFMLTransform transform) :
+            this(BlendMode.Alpha, transform, null, null, IntPtr.Zero)
         {
         }
 
@@ -39,7 +50,7 @@ namespace SFML.Graphics
         /// <param name="texture">Texture to use</param>
         ////////////////////////////////////////////////////////////
         public RenderStates(Texture texture) :
-            this(BlendMode.Alpha, Transform.Identity, texture, null)
+            this(BlendMode.Alpha, SFMLTransform.Identity, texture, null, IntPtr.Zero)
         {
         }
 
@@ -50,7 +61,7 @@ namespace SFML.Graphics
         /// <param name="shader">Shader to use</param>
         ////////////////////////////////////////////////////////////
         public RenderStates(Shader shader) :
-            this(BlendMode.Alpha, Transform.Identity, null, shader)
+            this(BlendMode.Alpha, SFMLTransform.Identity, null, shader, IntPtr.Zero)
         {
         }
 
@@ -63,12 +74,13 @@ namespace SFML.Graphics
         /// <param name="texture">Texture to use</param>
         /// <param name="shader">Shader to use</param>
         ////////////////////////////////////////////////////////////
-        public RenderStates(BlendMode blendMode, Transform transform, Texture texture, Shader shader)
+        public RenderStates(BlendMode blendMode, SFMLTransform transform, Texture texture, Shader shader, IntPtr cTexture)
         {
             BlendMode = blendMode;
             Transform = transform;
             Texture = texture;
             Shader = shader;
+            CTexture = cTexture;
         }
 
         ////////////////////////////////////////////////////////////
@@ -83,6 +95,7 @@ namespace SFML.Graphics
             Transform = copy.Transform;
             Texture = copy.Texture;
             Shader = copy.Shader;
+            CTexture = copy.CTexture;
         }
 
         ////////////////////////////////////////////////////////////
@@ -90,17 +103,20 @@ namespace SFML.Graphics
         ////////////////////////////////////////////////////////////
         public static RenderStates Default
         {
-            get { return new RenderStates(BlendMode.Alpha, Transform.Identity, null, null); }
+            get { return new RenderStates(BlendMode.Alpha, SFMLTransform.Identity, null, null, IntPtr.Zero); }
         }
 
         /// <summary>Blending mode</summary>
         public BlendMode BlendMode;
 
         /// <summary>Transform</summary>
-        public Transform Transform;
+        public SFMLTransform Transform;
 
         /// <summary>Texture</summary>
         public Texture Texture;
+
+        /// <summary>CTexture</summary>
+        public IntPtr CTexture;
 
         /// <summary>Shader</summary>
         public Shader Shader;
@@ -111,7 +127,7 @@ namespace SFML.Graphics
             MarshalData data = new MarshalData();
             data.blendMode = BlendMode;
             data.transform = Transform;
-            data.texture = Texture != null ? Texture.CPointer : IntPtr.Zero;
+            data.texture = CTexture != IntPtr.Zero ? CTexture : Texture != null ? Texture.CPointer : IntPtr.Zero;//Texture != null ? Texture.CPointer : IntPtr.Zero;
             data.shader = Shader != null ? Shader.CPointer : IntPtr.Zero;
 
             return data;
@@ -121,7 +137,7 @@ namespace SFML.Graphics
         internal struct MarshalData
         {
             public BlendMode blendMode;
-            public Transform transform;
+            public SFMLTransform transform;
             public IntPtr texture;
             public IntPtr shader;
         }
