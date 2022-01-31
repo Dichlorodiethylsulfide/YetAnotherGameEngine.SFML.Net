@@ -1,6 +1,10 @@
+#pragma warning disable IDE0022, IDE0009
+
 using ECS;
 using ECS.Graphics;
 using ECS.Window;
+using ECS.Maths;
+using ECS.Physics;
 
 using System;
 using System.Linq;
@@ -18,11 +22,12 @@ using System.Diagnostics.CodeAnalysis;
 namespace ECS.Library
 {
     using static UnmanagedCSharp;
+    using static Keyboard;
     public static class Time
     {
         public static float DeltaTime { get; internal set; } = 0f;
     }
-    public abstract partial class Engine
+    public abstract class Engine
     {
 
         internal static Engine MainEngine = null;
@@ -52,10 +57,13 @@ namespace ECS.Library
                 //Collection.AddNewSubsystem(typeof(MovementSubsystem));
                 Collection.AddNewSubsystem(typeof(ColorRandomiserSubsystem));
                 //Collection.AddNewSubsystem(typeof(ColorGradientSubsystem));
-                Collection.AddNewSubsystem(typeof(PlayerSubsystem));
+                //Collection.AddNewSubsystem(typeof(PlayerSubsystem));
+                //Collection.AddNewSubsystem(typeof(ControlInputSubsystem));
+                Collection.AddNewSubsystem(typeof(PhysicsSubsystem));
                 AddNewDataType<Texture>();
                 AddNewDataType<Transform>();
-                AddNewDataType<PlayerData>();
+                AddNewDataType<PhysicsBody>();
+                //AddNewDataType<PlayerData>();
                 /*foreach (var subsystem in Collection.Subsystems)
                 {
                     subsystem.Startup();
@@ -132,37 +140,7 @@ namespace ECS.Library
             });
         }
     }
-    public struct PlayerData : IComponentData
-    {
-        public int Health;
-    }
-    public class PlayerSubsystem : Subsystem
-    {
-        public override void Update(float deltaSeconds)
-        {
-            Entities.Iterate((ref PlayerData player, ref Transform transform) =>
-            {
-                player.Health += 1;
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.W)
-                {
-                    transform.Position += new Vector2f(0, -10f);
-                }
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.S)
-                {
-                    transform.Position += new Vector2f(0, 10f);
-                }
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.A)
-                {
-                    transform.Position += new Vector2f(-10f, 0f);
-                }
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.D)
-                {
-                    transform.Position += new Vector2f(10f, 0f);
-                }
-                Console.WriteLine(player.Health);
-            });
-        }
-    }
+    
 
     public class ColorRandomiserSubsystem : Subsystem
     {
@@ -180,6 +158,65 @@ namespace ECS.Library
             }
         }
     }
+
+    public class PhysicsSubsystem : Subsystem
+    {
+        private Vector2u Window = new Vector2u(Engine.MainEngine.Settings.VideoMode.Width, Engine.MainEngine.Settings.VideoMode.Height);
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref PhysicsBody body, ref Transform transform, ref Texture texture) =>
+            {
+                var size = texture.GetSize;
+
+                body.Velocity += Constants.Gravity * deltaSeconds;
+
+                if(transform.Position.Y + size.Y > Window.Y || transform.Position.Y < 0)
+                {
+                    body.Velocity = new Vector2f(body.Velocity.X, -1 * body.Velocity.Y);
+                }
+
+                if (transform.Position.X + size.X > Window.X || transform.Position.X < 0)
+                {
+                    body.Velocity = new Vector2f(-1 * body.Velocity.X, body.Velocity.Y);
+                }
+
+                transform.Position += body.Velocity * deltaSeconds;
+            });
+        }
+    }
+
+    /*
+    public struct PlayerData : IComponentData
+    {
+        public int Health;
+    }
+    public class ControlInputSubsystem : Subsystem
+    {
+        public Key Current => Engine.MainWindow.CurrentKey;
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref PlayerData playerData, ref Transform transform) =>
+            {
+                if (Current == Key.W)
+                {
+                    transform.Position += new Vector2f(0, -1f);
+                }
+                if (Current == Key.S)
+                {
+                    transform.Position += new Vector2f(0, 1f);
+                }
+                if (Current == Key.A)
+                {
+                    transform.Position += new Vector2f(-1f, 0f);
+                }
+                if (Current == Key.D)
+                {
+                    transform.Position += new Vector2f(1f, 0f);
+                }
+            });
+        }
+    }
+
 
     /*
     public abstract class Subsystem<Data0> : Subsystem where Data0 : IComponentData

@@ -16,6 +16,7 @@ namespace ECS
 {
     using static CAllocation;
     using static Debug;
+    using static UnmanagedCSharp;
     /*
     public class ReadOnlyDictionary<TKey, TValue> : IDictionary<TKey, TValue>
     {
@@ -300,7 +301,7 @@ namespace ECS
         }
         */
     }
-    public struct CObject : IEquatable<CObject>
+    public struct CObject : IEquatable<CObject>, IDisposable
     {
         private static int incrementer = 1;
         public static readonly CObject Null = new CObject();
@@ -311,7 +312,7 @@ namespace ECS
         internal unsafe int HasDataOf(int type)
         {
             if(MetaPtr != IntPtr.Zero)
-                return ( (UnmanagedCSharp.MetaCObject*)MetaPtr )->HasDataOf(type);
+                return ( (MetaCObject*)MetaPtr )->HasDataOf(type);
             return -1;
         }
         public int ID { get; private set; }
@@ -319,13 +320,53 @@ namespace ECS
         {
             if(HasDataOf<T>() == -1)
             {
-                UnmanagedCSharp.AddObjectData(this, data);
+                AddObjectData(this, data);
             }
         }
-        public T GetData<T>() where T : unmanaged => UnmanagedCSharp.GetObjectData<T>(this);
+        public T GetData<T>() where T : unmanaged
+        {
+            if(HasDataOf<T>() is int _int && _int != -1)
+            {
+                unsafe
+                {
+                    return ( (MetaCObject*)MetaPtr )->GetRef(_int)->GetInternalData<T>();
+                }
+            }
+            throw new NullReferenceException();
+        }
         public bool IsNull() => this.ID == 0;
         public override int GetHashCode() => this.ID;
         public bool Equals(CObject other) => this.ID == other.ID;
+        public void Dispose()
+        {
+            Destroy(this);
+        }
+        internal void InternalDispose()
+        {
+            unsafe
+            {
+                ( (MetaCObject*)MetaPtr )->Dispose();
+            }
+            Free(MetaPtr);
+        }
+        public static void Destroy(CObject obj)
+        {
+            unsafe
+            {
+                ObjectTablePtr->RemoveObjectAtIndex(obj.Index);
+            }
+            obj.MetaPtr = IntPtr.Zero;
+            obj.Index = -1;
+            obj.ID = 0;
+        }
+        public static void Destroy(int index) // memset block will return 0 for index and delete the object at the 0th position, not good
+        {
+            unsafe
+            {
+                Destroy(ObjectTablePtr->GetObjectAtIndex(index));
+            }
+        }
+
         public static implicit operator bool(CObject obj) => !obj.IsNull();
         internal static CObject New(int index)
         {
@@ -333,11 +374,11 @@ namespace ECS
             {
                 ID = incrementer++,
                 Index = index,
-                MetaPtr = UnmanagedCSharp.AllocateMetaCObject()
+                MetaPtr = MetaCObject.New(),
             };
             return obj;
         }
-        public static CObject New() => UnmanagedCSharp.AddNewObject();
+        public static CObject New() => AddNewObject();
     }
     internal static class CAllocation
     {
@@ -373,7 +414,7 @@ namespace ECS
         {
             if (index < DataTableStartIndex || index >= TablePtr->Entries) // skip object table
                 throw new NullReferenceException(nameof(index));
-            return (DataTable*)( *( (IntPtr*)&TablePtr->Value0 + index ) );
+            return (DataTable*)( *( &TablePtr->Value0 + index ) );
         }
         internal static DataTable* GetDataTableOf(int type)
         {
@@ -582,9 +623,26 @@ namespace ECS
             }
             public void SetNext(CObject cObject) => SetObjectAtIndex(Entries++, cObject);
 
+            public void RemoveObjectAtIndex(int index)
+            {
+                fixed (CObject* ptr = &this.Value0)
+                {
+                    if (index < 0 || index >= this.MaxSize)
+                        throw new ArgumentException();
+                    var destroyed = ptr + index;
+                    if (destroyed->MetaPtr == IntPtr.Zero)
+                        return;
+                    destroyed->InternalDispose();
+                    MemSet((IntPtr)destroyed, 0, sizeof(CObject));
+                    Entries--;
+                }
+            }
+
             public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
                 var type = typeof(T).GetHashCode();
+                var table = GetDataTableOf(type);
+                var counter = 0;
                 fixed(CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
@@ -593,14 +651,17 @@ namespace ECS
                         if(cObject->HasDataOf(type) is int _int && _int != -1)
                         {
                             ( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->UseInternalData(action);
+                            counter++;
                         }
-                        else if (i > this.Entries)
+                        else if (counter >= table->Entries)//(i > this.Entries)
                         {
                             // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                            // Add counter
                             return;
                         }
                     }
                 }
+                
             }
 
             public void IterateTable<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
@@ -608,6 +669,12 @@ namespace ECS
                 var type = typeof(T).GetHashCode();
                 var type2 = typeof(U).GetHashCode();
 
+                var table = GetDataTableOf(type);
+                var table2 = GetDataTableOf(type2);
+
+                var size = Math.Min(table->Entries, table2->Entries);
+
+                var counter = 0;
                 fixed (CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
@@ -617,13 +684,52 @@ namespace ECS
                         {
                             action(ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->ExposeData<T>(),
                                    ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int2)->ExposeData<U>());
+                            counter++;
                         }
-                        else if (i > this.Entries)
+                        else if (counter >= size)//(i > this.Entries)
                         {
                             // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
                             return;
                         }
                     }
+                }
+            }
+
+            public void IterateTable<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
+            {
+                var type = typeof(T).GetHashCode();
+                var type2 = typeof(U).GetHashCode();
+                var type3 = typeof(V).GetHashCode();
+
+                var table = GetDataTableOf(type);
+                var table2 = GetDataTableOf(type2);
+                var table3 = GetDataTableOf(type3);
+
+                var size = Math.Min(table->Entries, table2->Entries);
+                size = Math.Min(size, table3->Entries);
+
+                var counter = 0;
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (( cObject->HasDataOf(type) is int _int && _int != -1 ) &&
+                            ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ) &&
+                            ( cObject->HasDataOf(type3) is int _int3 && _int3 != -1 ))
+                        {
+                            action(ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->ExposeData<T>(),
+                                   ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int2)->ExposeData<U>(),
+                                   ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int3)->ExposeData<V>());
+                            counter++;
+                        }
+                        else if (counter >= size)//(i > this.Entries)
+                        {
+                            // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                            return;
+                        }
+                    }
+                    
                 }
             }
         }
@@ -634,20 +740,24 @@ namespace ECS
 
             public void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
-                var type = typeof(T).GetHashCode();
+                /*var type = typeof(T).GetHashCode();
                 if (typeof(T).GetHashCode() != type)
                 {
                     throw new ArgumentException("Data type mismatch.");
-                }
+                }*/
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
             public void Iterate<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
             {
-                var type = typeof(T).GetHashCode();
+                /*var type = typeof(T).GetHashCode();
                 if (typeof(T).GetHashCode() != type)
                 {
                     throw new ArgumentException("Data type mismatch.");
-                }
+                }*/
+                ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
+            }
+            public void Iterate<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
+            {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
 
@@ -725,6 +835,7 @@ namespace ECS
         public delegate void Ref<T0>(ref T0 data0);
         public delegate void RefWithIteration<T0>(ref T0 data0, int current_iteration, int max_iteration);
         public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
+        public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
         internal struct DataTable
         {
@@ -761,6 +872,18 @@ namespace ECS
                     if (index < 0 || index >= this.MaxSize)
                         throw new ArgumentException();
                     *( ptr + index ) = data;
+                }
+            }
+
+            public void RemoveDataAtIndex(int index)
+            {
+                fixed (Data* ptr = &this.Value0)
+                {
+                    if (index < 0 || index >= this.MaxSize)
+                        throw new ArgumentException();
+                    ( ptr + index )->Dispose();
+                    MemSet((IntPtr)( ptr + index ), 0, sizeof(Data)); // just reset it to 0 for now
+                    Entries--;
                 }
             }
 
@@ -973,13 +1096,18 @@ namespace ECS
                 return TextureTablePtr->GetLast();
             }
         }
-        public struct TextureEntry
+        public struct TextureEntry : IDisposable
         {
             public int HashCode;
             public IntRect TextureRect;
             public IntPtr TexturePtr;
 
-            public Vector2u GetSize() => SFML.Graphics.SFMLTexture.sfTexture_getSize(TexturePtr);
+            public Vector2u GetSize() => SFMLTexture.sfTexture_getSize(TexturePtr);
+
+            public void Dispose()
+            {
+                Free(TexturePtr);
+            }
         }
         /*
         public struct TextureEntry
@@ -1038,7 +1166,7 @@ namespace ECS
 
         }
         */
-        internal struct Data
+        internal struct Data : IDisposable
         {
             public static readonly Data Null = new Data();
 
@@ -1058,12 +1186,43 @@ namespace ECS
             public void UseInternalData<T>(Ref<T> action) where T : unmanaged => action(ref *(T*)this.DataPtr);
             public void UseInternalData<T>(RefWithIteration<T> action, int index, int max) where T : unmanaged => action(ref *(T*)this.DataPtr, index, max);
             public void UseInternalData<T>(In<T> action) where T : unmanaged => action(in *(T*)this.DataPtr);
+
+            public void Dispose()
+            {
+                // Kill link to object --- clear object's meta data cache
+                ObjectPtr = IntPtr.Zero;
+                // Kill link to data --- clear data's data
+                Free(DataPtr);
+                DataPtr = IntPtr.Zero;
+            }
+
+            public static void Destroy(Data data)
+            {
+                GetDataTableOf(data.DataType)->RemoveDataAtIndex(( (CObject*)data.ObjectPtr )->Index);
+            }
         }
-        internal struct MetaCObject
+        internal struct MetaCObject : IDisposable
         {
             public int Entries;
             public int MaxSize;
             public IntPtr DataPtr;
+
+            public void Dispose()
+            {
+                // Kill link to data --- clear data's data
+                fixed (IntPtr* ptr = &DataPtr)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        Data* data = (Data*)ptr;
+                        if (data->IsValid)
+                        {
+                            Data.Destroy(*data);
+                        }
+                        //*ptr = IntPtr.Zero;
+                    }
+                }
+            }
 
             public void AddRef(IntPtr dataPtr)
             {
@@ -1085,6 +1244,21 @@ namespace ECS
                     return (Data*)*(ptr + index);
                 }
             }
+            public void RemoveRef(int index)
+            {
+                if (index < 0 || index >= Entries)
+                    throw new ArgumentException(nameof(index));
+                fixed (IntPtr* ptr = &DataPtr)
+                {
+                    Data.Destroy(*( (Data*)ptr + index ));//->Dispose();
+                    for(int i = index; i < this.MaxSize; i++)
+                    {
+                        ptr[i] = ptr[i + 1];
+                    }
+                    MemSet(*( ptr + this.MaxSize - 1 ), 0, sizeof(IntPtr));
+                    Entries--;
+                }
+            }
             public int HasDataOf(int type)
             {
                 fixed (IntPtr* ptr = &DataPtr)
@@ -1100,19 +1274,20 @@ namespace ECS
                 return -1;
             }
 
-        }
-        internal static IntPtr AllocateMetaCObject(int size = 4)
-        {
-            var bytes = ( sizeof(int) * 2 ) + ( sizeof(IntPtr) * size );
-            var ptr = Malloc(bytes);
-            MemSet(ptr, 0, bytes);
-            var metaCObject = new MetaCObject
+            public static IntPtr New(int size = 8)
             {
-                Entries = 0,
-                MaxSize = size
-            };
-            *(MetaCObject*)ptr = metaCObject;
-            return ptr;
+                var bytes = ( sizeof(int) * 2 ) + ( sizeof(IntPtr) * size );
+                var ptr = Malloc(bytes);
+                MemSet(ptr, 0, bytes);
+                var metaCObject = new MetaCObject
+                {
+                    Entries = 0,
+                    MaxSize = size
+                };
+                *(MetaCObject*)ptr = metaCObject;
+                return ptr;
+            }
+
         }
     }
 }
@@ -1214,7 +1389,7 @@ namespace ECS.Graphics
         public Transform(float x, float y) : this(new Vector2f(x, y)) { }
         public Transform(Vector2f position)
         {
-            myOrigin = new Vector2f();
+            myOrigin = new Vector2f();//new Vector2f(0.5f, 0.5f);
             myPosition = position;
             myRotation = 0;
             myScale = new Vector2f(1, 1);
@@ -1236,39 +1411,37 @@ namespace ECS.Graphics
     public unsafe struct Texture : Drawable, IComponentData
     {
         internal Vertex4 Vertices;
-        internal FloatRect InternalLocalBounds;
+        //internal FloatRect InternalLocalBounds;
+        internal Vector2u Size;
         internal IntPtr TexturePtr;
         internal TextureEntry* Entry => (TextureEntry*)TexturePtr;
         public Texture(string filename)
         {
             TexturePtr = TryAddTexture(filename);
             Vertices = new Vertex4();
-            InternalLocalBounds = new FloatRect();
+            Size = new Vector2u();
+            //InternalLocalBounds = new FloatRect();
             UpdateTexture(TexturePtr);
-        }
-        internal void UpdateRect()
-        {
-            var size = Entry->GetSize();
-            Entry->TextureRect = new IntRect(0, 0, Convert.ToInt32(size.X), Convert.ToInt32(size.Y));
-            this.InternalLocalBounds = new FloatRect(0, 0, Entry->TextureRect.Width, Entry->TextureRect.Height);
         }
         public void UpdateTexture(IntPtr texture)
         {
             if (texture != IntPtr.Zero)
             {
                 this.TexturePtr = texture;
-                this.UpdateRect();
 
-                var bounds = this.InternalLocalBounds;
+                Size = Entry->GetSize();
+                Entry->TextureRect = new IntRect(0, 0, Convert.ToInt32(Size.X), Convert.ToInt32(Size.Y));
+
+                //var bounds = this.InternalLocalBounds;
                 var left = Convert.ToSingle(Entry->TextureRect.Left);
                 var right = left + Entry->TextureRect.Width;
                 var top = Convert.ToSingle(Entry->TextureRect.Top);
                 var bottom = top + Entry->TextureRect.Height;
 
                 Vertices.Vertex0 = new Vertex(new Vector2f(0, 0), Color.White, new Vector2f(left, top));
-                Vertices.Vertex1 = new Vertex(new Vector2f(0, bounds.Height), Color.White, new Vector2f(left, bottom));
-                Vertices.Vertex2 = new Vertex(new Vector2f(bounds.Width, 0), Color.White, new Vector2f(right, top));
-                Vertices.Vertex3 = new Vertex(new Vector2f(bounds.Width, bounds.Height), Color.White, new Vector2f(right, bottom));
+                Vertices.Vertex1 = new Vertex(new Vector2f(0, Size.Y), Color.White, new Vector2f(left, bottom));
+                Vertices.Vertex2 = new Vertex(new Vector2f(Size.X, 0), Color.White, new Vector2f(right, top));
+                Vertices.Vertex3 = new Vertex(new Vector2f(Size.X, Size.Y), Color.White, new Vector2f(right, bottom));
             }
         }
         public Texture ReturnNewTextureWithRandomColor()
@@ -1294,10 +1467,11 @@ namespace ECS.Graphics
         {
             return Vertices.Vertex0.Color;
         }
+        public Vector2u GetSize => Size;
         public void Draw(RenderTarget target, RenderStates states)
         {
             states.CTexture = Entry->TexturePtr;
-            ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);
+            ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);;
         }
     }
 }
@@ -1328,4 +1502,28 @@ namespace ECS.Window
             CurrentKey = Keyboard.Key.Unknown; // change
         }
     }
+}
+namespace ECS.Maths
+{
+    public static class Constants
+    {
+        public static readonly Vector2f Gravity = new Vector2f(0, 9.80665f);
+    }
+}
+namespace ECS.Physics
+{
+    public struct PhysicsBody : IComponentData
+    {
+        public static readonly Vector2f ConstantAcceleration = new Vector2f(1, 1);
+
+        public Vector2f Velocity;
+        public Vector2f Acceleration;
+    }
+
+    /*
+    public struct PhysicsCollider
+    {
+        
+    }
+    */
 }
