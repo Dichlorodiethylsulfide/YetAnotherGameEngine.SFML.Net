@@ -17,7 +17,7 @@ namespace SFML.Graphics
         /// Source texture of the shape
         /// </summary>
         ////////////////////////////////////////////////////////////
-        public Texture Texture
+        public SFMLTexture Texture
         {
             get { return myTexture; }
             set { myTexture = value; sfShape_setTexture(CPointer, value != null ? value.CPointer : IntPtr.Zero, false); }
@@ -239,7 +239,7 @@ namespace SFML.Graphics
         private readonly GetPointCountCallbackType myGetPointCountCallback;
         private readonly GetPointCallbackType myGetPointCallback;
 
-        private Texture myTexture = null;
+        private SFMLTexture myTexture = null;
 
         #region Imports
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]

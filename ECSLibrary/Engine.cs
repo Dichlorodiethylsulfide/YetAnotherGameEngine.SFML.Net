@@ -1,3 +1,7 @@
+using ECS;
+using ECS.Graphics;
+using ECS.Window;
+
 using System;
 using System.Linq;
 using System.Collections;
@@ -5,47 +9,21 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-using SFML.Window;
-using SFML.Graphics;
 using SFML.System;
+using SFML.Graphics;
+using SFML.Window;
 
 using System.Diagnostics.CodeAnalysis;
 
-using ECS;
-
 namespace ECS.Library
 {
+    using static UnmanagedCSharp;
     public static class Time
     {
         public static float DeltaTime { get; internal set; } = 0f;
     }
-    public abstract class Engine
+    public abstract partial class Engine
     {
-        internal class EngineWindow : RenderWindow
-        {
-            public Keyboard.Key CurrentKey { get; internal set; } = Keyboard.Key.Unknown;
-            public EngineWindow(VideoMode mode, string name) : base(mode, name)
-            {
-                SetFramerateLimit(60);
-                this.Closed += OnQuit;
-                this.KeyPressed += OnKeyPress;
-                this.KeyReleased += OnKeyRelease;
-            }
-
-            private void OnQuit(object sender, EventArgs args)
-            {
-                this.Close();
-            }
-
-            private void OnKeyPress(object sender, KeyEventArgs args)
-            {
-                CurrentKey = args.Code;
-            }
-            private void OnKeyRelease(object sender, KeyEventArgs args)
-            {
-                CurrentKey = Keyboard.Key.Unknown;
-            }
-        }
 
         internal static Engine MainEngine = null;
         internal static EngineWindow MainWindow => MainEngine?.ThisWindow;
@@ -53,43 +31,64 @@ namespace ECS.Library
 
         internal EngineWindow ThisWindow = null;
         public abstract void Initialise();
+        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new SFML.Window.VideoMode(800, 600), "Window");
         private void GameLoop() // might make "public virtual"
         {
-            var time = DateTime.Now;
             foreach (var subsystem in Collection.Subsystems)
             {
+                var time = DateTime.Now;
                 subsystem.Update(Time.DeltaTime);
+                Console.WriteLine(subsystem.Name + ": " + ( DateTime.Now - time ).TotalMilliseconds);
             }
-            Time.DeltaTime = (float)( DateTime.Now - time ).TotalMilliseconds;
         }
         public static void Start(Type engineType)
         {
             if (engineType.IsSubclassOf(typeof(Engine)))
             {
                 MainEngine = (Engine)Activator.CreateInstance(engineType);
-                MainEngine.ThisWindow = new EngineWindow(new VideoMode(800, 600), "Engine Window");
-                UnmanagedCSharp.Entry(2, 1024, 1024);
+                MainEngine.ThisWindow = new EngineWindow(MainEngine.Settings.VideoMode, MainEngine.Settings.WindowName);
+                Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
                 Collection.AddNewSubsystem(typeof(RenderSubsystem));
-                Collection.AddNewSubsystem(typeof(MovementSubsystem));
-                UnmanagedCSharp.AddNewDataType<Texture>();
-                UnmanagedCSharp.AddNewDataType<Transform>();
-                /*Collection.AddNewSubsystem(typeof(PlayerSubsystem));
-                Collection.AddNewDataType(typeof(Texture));
-                Collection.AddNewDataType(typeof(Transform));
-                Collection.AddNewDataType(typeof(PlayerData));*/
-                foreach (var subsystem in Collection.Subsystems)
+                //Collection.AddNewSubsystem(typeof(MovementSubsystem));
+                Collection.AddNewSubsystem(typeof(ColorRandomiserSubsystem));
+                //Collection.AddNewSubsystem(typeof(ColorGradientSubsystem));
+                Collection.AddNewSubsystem(typeof(PlayerSubsystem));
+                AddNewDataType<Texture>();
+                AddNewDataType<Transform>();
+                AddNewDataType<PlayerData>();
+                /*foreach (var subsystem in Collection.Subsystems)
                 {
                     subsystem.Startup();
-                }
+                }*/
                 MainEngine.Initialise();
                 while (MainWindow.IsOpen)
                 {
                     MainWindow.DispatchEvents();
+                    var time = DateTime.Now;
                     MainEngine.GameLoop();
                     MainWindow.Display();
                     MainWindow.Clear();
+                    Time.DeltaTime = (float)( DateTime.Now - time ).TotalSeconds;
                 }
             }
+        }
+    }
+    public struct EngineSettings
+    {
+        public int MainTableSize;
+        public int ObjectTableSize;
+        public int DataTableSize;
+        public int TextureTableSize;
+        public VideoMode VideoMode;
+        public string WindowName;
+        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, VideoMode mode, string name)
+        {
+            MainTableSize = mSize;
+            ObjectTableSize = otSize;
+            DataTableSize = dtSize;
+            TextureTableSize = texSize;
+            VideoMode = mode;
+            WindowName = name;
         }
     }
     public static class Collection
@@ -105,50 +104,173 @@ namespace ECS.Library
     }
     public abstract class Subsystem
     {
-        public abstract void Startup();
+        internal Subsystem()
+        {
+            Name = GetType().Name;
+        }
+        public readonly string Name;
         public abstract void Update(float deltaSeconds);
     }
+    public class MovementSubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref Transform transform) =>
+            {
+                transform.Position += new Vector2f(0.1f, 0.1f);
+            });
+        }
+    }
+    public class RenderSubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref Texture texture, ref Transform transform) =>
+            {
+                var states = new RenderStates(transform.SFMLTransform);
+                texture.Draw(Engine.MainWindow, states);
+            });
+        }
+    }
+    public struct PlayerData : IComponentData
+    {
+        public int Health;
+    }
+    public class PlayerSubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref PlayerData player, ref Transform transform) =>
+            {
+                player.Health += 1;
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.W)
+                {
+                    transform.Position += new Vector2f(0, -10f);
+                }
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.S)
+                {
+                    transform.Position += new Vector2f(0, 10f);
+                }
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.A)
+                {
+                    transform.Position += new Vector2f(-10f, 0f);
+                }
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.D)
+                {
+                    transform.Position += new Vector2f(10f, 0f);
+                }
+                Console.WriteLine(player.Health);
+            });
+        }
+    }
+
+    public class ColorRandomiserSubsystem : Subsystem
+    {
+        private float Timer = 0f;
+        public override void Update(float deltaSeconds)
+        {
+            Timer += deltaSeconds;
+            if (Timer > 1f)
+            {
+                Entities.Iterate((ref Texture texture) =>
+                {
+                    texture.RandomiseColor();
+                });
+                Timer = 0f;
+            }
+        }
+    }
+
+    /*
     public abstract class Subsystem<Data0> : Subsystem where Data0 : IComponentData
     {
-        protected UnmanagedCSharp.RefDataTable RefTable0;
+        //protected RefDataTable RefTable0;
+        //protected RefObjectTable RefTable0;
         public override void Startup()
         {
-            RefTable0 = UnmanagedCSharp.RefDataTable.CreateFromUnknownType<Data0>();
+            //RefTable0 = RefDataTable.CreateFromUnknownType<Data0>();
+            //RefTable0 = RefObjectTable.New();
         }
     }
     public class MovementSubsystem : Subsystem<Transform>
     {
         public override void Update(float deltaSeconds)
         {
-            var time = DateTime.Now;
-            RefTable0.IterateTable((ref Transform transform) =>
+            RefObjects.IterateTable((ref Transform transform) =>
             {
                 transform.Position += new Vector2f(0.1f, 0.1f);
             });
-            Console.WriteLine("Movement: " + ( DateTime.Now - time ).TotalMilliseconds);
         }
     }
     public abstract class Subsystem<Data0, Data1> : Subsystem where Data0 : IComponentData where Data1 : IComponentData
     {
-        protected UnmanagedCSharp.RefDataTable RefTable0;
-        protected UnmanagedCSharp.RefDataTable RefTable1;
+        //protected RefDataTable RefTable0;
+        //protected RefDataTable RefTable1;
         public override void Startup()
         {
-            RefTable0 = UnmanagedCSharp.RefDataTable.CreateFromUnknownType<Data0>();
-            RefTable1 = UnmanagedCSharp.RefDataTable.CreateFromUnknownType<Data1>();
+            //RefTable0 = RefDataTable.CreateFromUnknownType<Data0>();
+            //RefTable1 = RefDataTable.CreateFromUnknownType<Data1>();
         }
     }
     public class RenderSubsystem : Subsystem<Texture, Transform>
     {
         public override void Update(float deltaSeconds)
         {
-            var time = DateTime.Now;
-            RefTable0.IterateTable((ref Texture texture, ref Transform transform) =>
+            RefObjects.IterateTable((ref Texture texture, ref Transform transform) =>
             {
                 var states = new RenderStates(transform.SFMLTransform);
                 texture.Draw(Engine.MainWindow, states);
             });
-            Console.WriteLine("Render: " + ( DateTime.Now - time ).TotalMilliseconds);
         }
     }
+    
+    public struct PlayerData : IComponentData
+    {
+        public int Health;
+    }
+    public class PlayerSubsystem : Subsystem<PlayerData, Transform>
+    {
+        public override void Update(float deltaSeconds)
+        {
+            RefObjects.IterateTable((ref PlayerData player, ref Transform transform) =>
+            {
+                player.Health += 1;
+                if(Engine.MainWindow.CurrentKey == Keyboard.Key.W)
+                {
+                    transform.Position += new Vector2f(0, -10f);
+                }
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.S)
+                {
+                    transform.Position += new Vector2f(0, 10f);
+                }
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.A)
+                {
+                    transform.Position += new Vector2f(-10f, 0f);
+                }
+                if (Engine.MainWindow.CurrentKey == Keyboard.Key.D)
+                {
+                    transform.Position += new Vector2f(10f, 0f);
+                }
+                Console.WriteLine(player.Health);
+            });
+        }
+    }
+    
+    public class ColorRandomiserSubsystem : Subsystem<Texture>
+    {
+        private float Timer = 0f;
+        public override void Update(float deltaSeconds)
+        {
+            Timer += deltaSeconds;
+            if(Timer > 1f)
+            {
+                RefObjects.IterateTable((ref Texture texture) =>
+                {
+                    texture.RandomiseColor();
+                });
+                Timer = 0f;
+            }
+        }
+    }
+    */
 }

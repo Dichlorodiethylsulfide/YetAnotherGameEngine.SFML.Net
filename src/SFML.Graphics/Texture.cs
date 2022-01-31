@@ -12,7 +12,7 @@ namespace SFML.Graphics
     /// Image living on the graphics card that can be used for drawing
     /// </summary>
     ////////////////////////////////////////////////////////////
-    public class Texture : ObjectBase
+    public class SFMLTexture : ObjectBase
     {
         ////////////////////////////////////////////////////////////
         /// <summary>
@@ -22,7 +22,7 @@ namespace SFML.Graphics
         /// <param name="height">Texture height</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(uint width, uint height) :
+        public SFMLTexture(uint width, uint height) :
             base(sfTexture_create(width, height))
         {
             if (CPointer == IntPtr.Zero)
@@ -38,7 +38,7 @@ namespace SFML.Graphics
         /// <param name="filename">Path of the image file to load</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(string filename) :
+        public SFMLTexture(string filename) :
             this(filename, new IntRect(0, 0, 0, 0))
         {
         }
@@ -51,7 +51,7 @@ namespace SFML.Graphics
         /// <param name="area">Area of the image to load</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(string filename, IntRect area) :
+        public SFMLTexture(string filename, IntRect area) :
             base(sfTexture_createFromFile(filename, ref area))
         {
             if (CPointer == IntPtr.Zero)
@@ -67,7 +67,7 @@ namespace SFML.Graphics
         /// <param name="stream">Stream containing the file contents</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(Stream stream) :
+        public SFMLTexture(Stream stream) :
             this(stream, new IntRect(0, 0, 0, 0))
         {
         }
@@ -80,7 +80,7 @@ namespace SFML.Graphics
         /// <param name="area">Area of the image to load</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(Stream stream, IntRect area) :
+        public SFMLTexture(Stream stream, IntRect area) :
             base(IntPtr.Zero)
         {
             using (StreamAdaptor adaptor = new StreamAdaptor(stream))
@@ -101,7 +101,7 @@ namespace SFML.Graphics
         /// <param name="image">Image to load to the texture</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(Image image) :
+        public SFMLTexture(Image image) :
             this(image, new IntRect(0, 0, 0, 0))
         {
         }
@@ -114,7 +114,7 @@ namespace SFML.Graphics
         /// <param name="area">Area of the image to load</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(Image image, IntRect area) :
+        public SFMLTexture(Image image, IntRect area) :
             base(sfTexture_createFromImage(image.CPointer, ref area))
         {
             if (CPointer == IntPtr.Zero)
@@ -130,7 +130,7 @@ namespace SFML.Graphics
         /// <param name="bytes">Byte array containing the file contents</param>
         /// <exception cref="LoadingFailedException" />
         ////////////////////////////////////////////////////////////
-        public Texture(byte[] bytes) :
+        public SFMLTexture(byte[] bytes) :
             base(IntPtr.Zero)
         {
             GCHandle pin = GCHandle.Alloc(bytes, GCHandleType.Pinned);
@@ -155,7 +155,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="copy">Texture to copy</param>
         ////////////////////////////////////////////////////////////
-        public Texture(Texture copy) :
+        public SFMLTexture(SFMLTexture copy) :
             base(sfTexture_copy(copy.CPointer))
         {
         }
@@ -227,7 +227,7 @@ namespace SFML.Graphics
         /// <param name="x">X offset in this texture where to copy the source texture</param>
         /// <param name="y">Y offset in this texture where to copy the source texture</param>
         ////////////////////////////////////////////////////////////
-        public void Update(Texture texture, uint x, uint y)
+        public void Update(SFMLTexture texture, uint x, uint y)
         {
             sfTexture_updateFromTexture(CPointer, texture.CPointer, x, y);
         }
@@ -341,7 +341,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="right">Instance to swap with</param>
         ////////////////////////////////////////////////////////////
-        public void Swap(Texture right)
+        public void Swap(SFMLTexture right)
         {
             sfTexture_swap(CPointer, right.CPointer);
         }
@@ -412,7 +412,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="texture">Shader to bind (can be null to use no texture)</param>
         ////////////////////////////////////////////////////////////
-        public static void Bind(Texture texture)
+        public static void Bind(SFMLTexture texture)
         {
             sfTexture_bind(texture != null ? texture.CPointer : IntPtr.Zero);
         }
@@ -447,7 +447,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="cPointer">Pointer to the object in C library</param>
         ////////////////////////////////////////////////////////////
-        internal Texture(IntPtr cPointer) :
+        internal SFMLTexture(IntPtr cPointer) :
             base(cPointer)
         {
             myExternal = true;

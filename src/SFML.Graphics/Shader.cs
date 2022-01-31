@@ -345,7 +345,7 @@ namespace SFML.Graphics
         /// <param name="texture">Texture to assign</param>
         ///
         ////////////////////////////////////////////////////////////
-        public void SetUniform(string name, Texture texture)
+        public void SetUniform(string name, SFMLTexture texture)
         {
             // Keep a reference to the Texture so it doesn't get GC'd
             myTextures[name] = texture;
@@ -619,7 +619,7 @@ namespace SFML.Graphics
         /// <param name="texture">Texture to assign</param>
         ////////////////////////////////////////////////////////////
         [Obsolete("SetParameter is deprecated, please use the corresponding SetUniform")]
-        public void SetParameter(string name, Texture texture)
+        public void SetParameter(string name, SFMLTexture texture)
         {
             // Keep a reference to the Texture so it doesn't get GC'd
             myTextures[name] = texture;
@@ -737,7 +737,7 @@ namespace SFML.Graphics
         }
 
         // Keeps references to used Textures for GC prevention during use
-        private Dictionary<string, Texture> myTextures = new Dictionary<string, Texture>();
+        private Dictionary<string, SFMLTexture> myTextures = new Dictionary<string, SFMLTexture>();
 
         #region Imports
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]

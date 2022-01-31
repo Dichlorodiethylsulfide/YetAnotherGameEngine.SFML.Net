@@ -124,9 +124,9 @@ namespace SFML.Graphics
         /// <param name="characterSize">Character size</param>
         /// <returns>Texture storing the glyphs for the given size</returns>
         ////////////////////////////////////////////////////////////
-        public Texture GetTexture(uint characterSize)
+        public SFMLTexture GetTexture(uint characterSize)
         {
-            myTextures[characterSize] = new Texture(sfFont_getTexture(CPointer, characterSize));
+            myTextures[characterSize] = new SFMLTexture(sfFont_getTexture(CPointer, characterSize));
             return myTextures[characterSize];
         }
 
@@ -171,7 +171,7 @@ namespace SFML.Graphics
 
             if (disposing)
             {
-                foreach (Texture texture in myTextures.Values)
+                foreach (SFMLTexture texture in myTextures.Values)
                 {
                     texture.Dispose();
                 }
@@ -219,7 +219,7 @@ namespace SFML.Graphics
             public IntPtr Family;
         }
 
-        private Dictionary<uint, Texture> myTextures = new Dictionary<uint, Texture>();
+        private Dictionary<uint, SFMLTexture> myTextures = new Dictionary<uint, SFMLTexture>();
         private SFML.System.StreamAdaptor myStream = null;
 
         #region Imports

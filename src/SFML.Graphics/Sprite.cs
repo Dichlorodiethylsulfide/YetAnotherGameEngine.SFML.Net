@@ -32,7 +32,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="texture">Source texture to assign to the sprite</param>
         ////////////////////////////////////////////////////////////
-        public Sprite(Texture texture) :
+        public Sprite(SFMLTexture texture) :
             base(sfSprite_create())
         {
             Texture = texture;
@@ -45,7 +45,7 @@ namespace SFML.Graphics
         /// <param name="texture">Source texture to assign to the sprite</param>
         /// <param name="rectangle">Sub-rectangle of the texture to assign to the sprite</param>
         ////////////////////////////////////////////////////////////
-        public Sprite(Texture texture, IntRect rectangle) :
+        public Sprite(SFMLTexture texture, IntRect rectangle) :
             base(sfSprite_create())
         {
             Texture = texture;
@@ -84,7 +84,7 @@ namespace SFML.Graphics
         /// Source texture displayed by the sprite
         /// </summary>
         ////////////////////////////////////////////////////////////
-        public Texture Texture
+        public SFMLTexture Texture
         {
             get { return myTexture; }
             set { myTexture = value; sfSprite_setTexture(CPointer, value != null ? value.CPointer : IntPtr.Zero, false); }
@@ -178,7 +178,7 @@ namespace SFML.Graphics
             sfSprite_destroy(CPointer);
         }
 
-        private Texture myTexture = null;
+        private SFMLTexture myTexture = null;
 
         #region Imports
 

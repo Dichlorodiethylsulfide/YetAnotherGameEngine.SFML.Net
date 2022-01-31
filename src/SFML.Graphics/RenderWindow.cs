@@ -583,14 +583,14 @@ namespace SFML.Graphics
             }
         }
 
-        public void Draw(Vertex4 vertices, uint start, uint count, PrimitiveType type, RenderStates states)
+        public void Draw(Vertex4 vertices, PrimitiveType type, RenderStates states)
         {
             RenderStates.MarshalData marshaledStates = states.Marshal();
             unsafe
             {
                 Vertex* vertexPtr = (Vertex*)&vertices;
                 //Console.WriteLine(*vertexPtr);
-                sfRenderWindow_drawPrimitives(CPointer, vertexPtr + start, count, type, ref marshaledStates);
+                sfRenderWindow_drawPrimitives(CPointer, vertexPtr, 4, type, ref marshaledStates);
             }
         }
 
@@ -689,7 +689,7 @@ namespace SFML.Graphics
         /// </summary>
         /// 
         /// <remarks>
-        /// Deprecated. Use <see cref="Texture"/> and <see cref="Texture.Update(RenderWindow)"/>
+        /// Deprecated. Use <see cref="SFMLTexture"/> and <see cref="SFMLTexture.Update(RenderWindow)"/>
         /// instead:
         /// <code>
         ///    Texture texture = new Texture(window.Size);

@@ -39,7 +39,7 @@ namespace SFML.Graphics
             base(sfRenderTexture_create(width, height, depthBuffer))
         {
             myDefaultView = new View(sfRenderTexture_getDefaultView(CPointer));
-            myTexture = new Texture(sfRenderTexture_getTexture(CPointer));
+            myTexture = new SFMLTexture(sfRenderTexture_getTexture(CPointer));
             GC.SuppressFinalize(myDefaultView);
             GC.SuppressFinalize(myTexture);
         }
@@ -57,7 +57,7 @@ namespace SFML.Graphics
             base(sfRenderTexture_createWithSettings(width, height, ref contextSettings))
         {
             myDefaultView = new View(sfRenderTexture_getDefaultView(CPointer));
-            myTexture = new Texture(sfRenderTexture_getTexture(CPointer));
+            myTexture = new SFMLTexture(sfRenderTexture_getTexture(CPointer));
             GC.SuppressFinalize(myDefaultView);
             GC.SuppressFinalize(myTexture);
         }
@@ -81,7 +81,7 @@ namespace SFML.Graphics
         /// </summary>
         ///
         /// <remarks>
-        /// This property is similar to <see cref="Texture.Repeated"/>.
+        /// This property is similar to <see cref="SFMLTexture.Repeated"/>.
         /// This parameter is disabled by default.
         /// </remarks>
         ////////////////////////////////////////////////////////////
@@ -245,7 +245,7 @@ namespace SFML.Graphics
         /// </summary>
         ///
         /// <remarks>
-        /// This function is similar to <see cref="Texture.GenerateMipmap"/> and operates
+        /// This function is similar to <see cref="SFMLTexture.GenerateMipmap"/> and operates
         /// on the texture used as the target for drawing.
         /// Be aware that any draw operation may modify the base level image data.
         /// For this reason, calling this function only makes sense after all
@@ -297,7 +297,7 @@ namespace SFML.Graphics
         /// Target texture of the render texture
         /// </summary>
         ////////////////////////////////////////////////////////////
-        public Texture Texture
+        public SFMLTexture Texture
         {
             get { return myTexture; }
         }
@@ -522,7 +522,7 @@ namespace SFML.Graphics
         }
 
         private View myDefaultView = null;
-        private Texture myTexture = null;
+        private SFMLTexture myTexture = null;
 
         #region Imports
         [Obsolete("sfRenderTexture_create is obselete. Use sfRenderTexture_createWithSettings instead.")]

@@ -7,8 +7,4 @@
 
   <Import Project="..\..\SFML.Module.props" />
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\ECSCore\ECSCore.csproj" />
-  </ItemGroup>
-
 </Project>

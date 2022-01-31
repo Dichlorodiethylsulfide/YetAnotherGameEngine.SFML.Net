@@ -49,7 +49,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="texture">Texture to use</param>
         ////////////////////////////////////////////////////////////
-        public RenderStates(Texture texture) :
+        public RenderStates(SFMLTexture texture) :
             this(BlendMode.Alpha, SFMLTransform.Identity, texture, null, IntPtr.Zero)
         {
         }
@@ -74,7 +74,7 @@ namespace SFML.Graphics
         /// <param name="texture">Texture to use</param>
         /// <param name="shader">Shader to use</param>
         ////////////////////////////////////////////////////////////
-        public RenderStates(BlendMode blendMode, SFMLTransform transform, Texture texture, Shader shader, IntPtr cTexture)
+        public RenderStates(BlendMode blendMode, SFMLTransform transform, SFMLTexture texture, Shader shader, IntPtr cTexture)
         {
             BlendMode = blendMode;
             Transform = transform;
@@ -113,7 +113,7 @@ namespace SFML.Graphics
         public SFMLTransform Transform;
 
         /// <summary>Texture</summary>
-        public Texture Texture;
+        public SFMLTexture Texture;
 
         /// <summary>CTexture</summary>
         public IntPtr CTexture;
