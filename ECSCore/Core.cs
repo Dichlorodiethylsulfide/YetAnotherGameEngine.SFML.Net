@@ -12,6 +12,9 @@ using SFML.Window;
 using SFML.Graphics;
 using SFML.System;
 
+using ECS.Graphics;
+using ECS.Physics;
+
 namespace ECS 
 {
     using static CAllocation;
@@ -309,7 +312,7 @@ namespace ECS
         internal int Index;
         internal IntPtr MetaPtr;
         internal unsafe int HasDataOf<T>() where T : unmanaged => this.HasDataOf(typeof(T).GetHashCode());
-        internal unsafe int HasDataOf(int type)
+        internal unsafe int HasDataOf(int type) // use 'out' for multiple type checks?
         {
             if(MetaPtr != IntPtr.Zero)
                 return ( (MetaCObject*)MetaPtr )->HasDataOf(type);
@@ -330,6 +333,17 @@ namespace ECS
                 unsafe
                 {
                     return ( (MetaCObject*)MetaPtr )->GetRef(_int)->GetInternalData<T>();
+                }
+            }
+            throw new NullReferenceException();
+        }
+        internal unsafe T* GetDataPointer<T>() where T : unmanaged
+        {
+            if (HasDataOf<T>() is int _int && _int != -1)
+            {
+                unsafe
+                {
+                    return ( (MetaCObject*)MetaPtr )->GetRef(_int)->ExposeData<T>();
                 }
             }
             throw new NullReferenceException();
@@ -401,12 +415,13 @@ namespace ECS
     }
     public static unsafe class UnmanagedCSharp
     {
-        private const int DataTableStartIndex = 2; // Object Table at 0, Texture table will be 1, so this should be 2 when done
+        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, physics will be 2, so should be 3
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
         internal static LookupTable* TablePtr => (LookupTable*)Table;
         internal static ObjectTable* ObjectTablePtr => (ObjectTable*)*&TablePtr->Value0;
         internal static TextureTable* TextureTablePtr => (TextureTable*)*((&TablePtr->Value0) + 1);
+        internal static PhysicsQueryTable* PhysicsQueryTablePtr => (PhysicsQueryTable*)*((&TablePtr->Value0) + 2);
 
         private static RefObjectTable refObjects = default;
         public static RefObjectTable Entities => refObjects;
@@ -432,6 +447,7 @@ namespace ECS
             CreateMainTable(mainSize + DataTableStartIndex);
             CreateObjectTable(objectSize);
             CreateTextureTable(textureSize);
+            CreatePhysicsTable(objectSize);
             refObjects = RefObjectTable.New();
             DefaultDataTableSize = defaultDataSize;
         }
@@ -456,6 +472,19 @@ namespace ECS
                 }
             }
             CreateDataTable<T>(DefaultDataTableSize);
+        }
+        private static void CreatePhysicsTable(int size = 1024)
+        {
+            var bytes = ( sizeof(int) * 3 ) + (sizeof(IntPtr) * 2) + ( sizeof(CObject*) * size );
+            var entry = Malloc(bytes);
+            MemSet(entry, 0, bytes);
+            var table = (PhysicsQueryTable*)entry;
+            *table = new PhysicsQueryTable();
+            table->Entries = 0;
+            table->MaxSize = size;
+            table->AllocatedBytes = size;
+            table->CreateCollisionTables();
+            TablePtr->SetNext(entry);
         }
         private static void CreateMainTable(int size = 1024)
         {
@@ -587,6 +616,163 @@ namespace ECS
             }
             public void SetNext(IntPtr new_ptr) => SetPointerAtIndex(Entries++, new_ptr);
         }
+        internal struct PhysicsQueryTable
+        {
+            public int Entries;
+            public int MaxSize;
+            public int AllocatedBytes;
+            private IntPtr LocalIntervals;
+            private IntPtr LocalCollisions;
+            public CObject* FixedValue0;
+
+            public void Clear()
+            {
+                fixed(CObject** ptr = &this.FixedValue0)
+                {
+                    MemSet((IntPtr)ptr, 0, this.MaxSize);
+                    this.Entries = 0;
+                }
+            }
+            public void AddNext(CObject* ptr)
+            {
+                fixed (CObject** ptr_ptr = &this.FixedValue0)
+                {
+                    *( ptr_ptr + Entries++ ) = ptr;
+                }
+            }
+            public void SelectionSort(Compare<Transform> comparer)
+            {
+                fixed (CObject** ptr = &this.FixedValue0)
+                {
+                    for (int iterations = 0; iterations < this.Entries - 1; iterations++)
+                    {
+                        int lowest = iterations;
+                        for (int i = iterations + 1; i < this.Entries; i++)
+                        {
+                            if(comparer(in *ptr[i]->GetDataPointer<Transform>(), in *ptr[lowest]->GetDataPointer<Transform>()) < 0) // == -1
+                                lowest = i;
+                        }
+                        var temp = ptr[iterations];
+                        ptr[iterations] = ptr[lowest];
+                        ptr[lowest] = temp;
+                    }
+                }
+            }
+            private struct Collision
+            {
+                public bool Checkable;
+                public CObject* Collider1;
+                public CObject* Collider2;
+                public Collision(CObject* _1, CObject* _2)
+                {
+                    Collider1 = _1;
+                    Collider2 = _2;
+                    Checkable = true;
+                }
+
+                public void Resolve()
+                {
+                    var rect = Collider1->GetDataPointer<Transform>()->GetGlobalBounds(Collider1->GetDataPointer<Texture>()->GetLocalBounds());
+                    var rect_2 = Collider2->GetDataPointer<Transform>()->GetGlobalBounds(Collider2->GetDataPointer<Texture>()->GetLocalBounds());
+                    if(rect.Intersects(rect_2))
+                    {
+                        Console.WriteLine("Collision");
+                    }
+                }
+            }
+            private struct LocalArray
+            {
+                public int Entries;
+                public int MaxSize;
+                public int AllocatedBytes;
+                public byte Items;
+
+                public void AddNext<T>(T data) where T : unmanaged
+                {
+                    fixed(byte* ptr = &Items)
+                    {
+                        var t_ptr = (T*)ptr;
+                        *( t_ptr + Entries++ ) = data;
+                    }
+                }
+                public void RemoveLast<T>() where T : unmanaged
+                {
+                    if (Entries == 0)
+                        return;
+                    fixed (byte* ptr = &Items)
+                    {
+                        var t_ptr = (T*)ptr + Entries;
+                        MemSet((IntPtr)t_ptr, 0, sizeof(T));
+                        Entries--;
+                    }
+                }
+                public T Get<T>(int index) where T : unmanaged
+                {
+                    if (index < 0 || index >= MaxSize)
+                        throw new ArgumentOutOfRangeException("index");
+                    fixed (byte* ptr = &Items)
+                    {
+                        return *((T*)ptr + index);
+                    }
+                }
+                public void Clear()
+                {
+                    fixed (byte* ptr = &Items)
+                    {
+                        MemSet((IntPtr)ptr, 0, this.MaxSize);
+                        Entries = 0;
+                    }
+                }
+
+                public static IntPtr New<T>(int size = 10) where T : unmanaged
+                {
+                    var bytes = (sizeof(int) * 3) + (sizeof(T) * size);
+                    var entry = Malloc(bytes);
+                    MemSet(entry, 0, bytes);
+                    var array = (LocalArray*)entry;
+                    array->Entries = 0;
+                    array->MaxSize = size;
+                    array->AllocatedBytes = bytes;
+                    return entry;
+                }
+            }
+            public void CreateCollisionTables()
+            {
+                var size = this.MaxSize;
+                LocalIntervals = LocalArray.New<IntPtr>(size); // can't use CObject* as generic
+                LocalCollisions = LocalArray.New<Collision>(size);
+            }
+            public void CollisionQuery() // assume T is Transform, X Axis, Sweep and Prune
+            {
+                fixed (CObject** ptr = &this.FixedValue0)
+                {
+                    for (int i = 0; i < this.Entries; i++) // Axis list
+                    {
+                        for (int j = 0; j < ( (LocalArray*)LocalIntervals )->Entries; j++)
+                        {
+                            var get_left = ptr[i]->GetDataPointer<Transform>()->Position + (Vector2f)( ptr[i]->GetDataPointer<Texture>()->Size / 2 );
+                            var other = (CObject*)( (LocalArray*)LocalIntervals )->Get<IntPtr>(j);
+                            var get_right = other->GetDataPointer<Transform>()->Position + (Vector2f)other->GetDataPointer<Texture>()->Size;
+                            if (get_left.X > get_right.X)
+                            {
+                                ( (LocalArray*)LocalIntervals )->RemoveLast<IntPtr>();
+                            }
+                        }
+                        for (int k = 0; k < ( (LocalArray*)LocalIntervals )->Entries; k++)
+                        {
+                            ( (LocalArray*)LocalCollisions )->AddNext(new Collision(ptr[i], (CObject*)( (LocalArray*)LocalIntervals )->Get<IntPtr>(k)));
+                        }
+                        ( (LocalArray*)LocalIntervals )->AddNext((IntPtr)ptr[i]);
+                    }
+                    for(int i = 0; i < ((LocalArray*)LocalCollisions )->Entries; i++)
+                    {
+                        ( (LocalArray*)LocalCollisions )->Get<Collision>(i).Resolve();
+                    }
+                    ( (LocalArray*)LocalIntervals )->Clear();
+                    ( (LocalArray*)LocalCollisions )->Clear();
+                }
+            }
+        }
         internal struct ObjectTable
         {
             public int Entries;
@@ -638,6 +824,37 @@ namespace ECS
                 }
             }
 
+            public void PhysicsTest(Compare<Transform> comparer, bool multi_threaded = false)
+            {
+                var type = typeof(Transform).GetHashCode();
+                var type2 = typeof(PhysicsBody).GetHashCode();
+                var table = GetDataTableOf(type);
+                var counter = 0;
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (cObject->HasDataOf(type) is int _int && _int != -1 && cObject->HasDataOf(type2) is int _int2 && _int2 != -1)
+                        {
+                            PhysicsQueryTablePtr->AddNext(object_ptr + counter++);
+                        }
+                        else if (counter >= table->Entries)//(i > this.Entries)
+                        {
+                            // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                            break;
+                        }
+                    }
+                    PhysicsQueryTablePtr->SelectionSort(comparer);
+
+                    PhysicsQueryTablePtr->CollisionQuery();
+
+                    PhysicsQueryTablePtr->Clear();
+                }
+
+                
+            }
+
             public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
                 var type = typeof(T).GetHashCode();
@@ -656,7 +873,6 @@ namespace ECS
                         else if (counter >= table->Entries)//(i > this.Entries)
                         {
                             // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
-                            // Add counter
                             return;
                         }
                     }
@@ -761,6 +977,11 @@ namespace ECS
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
 
+            public void PhysicsTest(Compare<Transform> comparer)
+            {
+                ( (ObjectTable*)table )->PhysicsTest(comparer);
+            }
+
             public static RefObjectTable New()
             {
                 var refTable = new RefObjectTable()
@@ -837,6 +1058,7 @@ namespace ECS
         public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
         public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
+        public delegate int Compare<T0>(in T0 data, in T0 otherData);
         internal struct DataTable
         {
             public int DataType;
@@ -1386,6 +1608,7 @@ namespace ECS.Graphics
                 return myInverseTransform;
             }
         }
+        public FloatRect GetGlobalBounds(FloatRect localBounds) => SFMLTransform.TransformRect(localBounds);
         public Transform(float x, float y) : this(new Vector2f(x, y)) { }
         public Transform(Vector2f position)
         {
@@ -1473,6 +1696,7 @@ namespace ECS.Graphics
             states.CTexture = Entry->TexturePtr;
             ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);;
         }
+        public FloatRect GetLocalBounds() => new FloatRect(new Vector2f(0, 0), new Vector2f(Size.X, Size.Y));
     }
 }
 namespace ECS.Window
@@ -1520,6 +1744,7 @@ namespace ECS.Physics
         public Vector2f Acceleration;
     }
 
+    
     /*
     public struct PhysicsCollider
     {

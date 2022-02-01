@@ -28,15 +28,40 @@ namespace Game_Example
             Texture texture = new Texture(Placeholder);
 
 
+            /*
             var counter = 10;
-
-            for (int x = 0; x < counter; x++)
+            
+            for (int y = 0; y < counter; y++)
             {
-                var cObject = CObject.New();
-                cObject.AddData(texture);
-                cObject.AddData(new Transform(x * Size * 2, 0));
-                cObject.AddData(new PhysicsBody());
-            }
+                for(int x = 0; x < counter; x++)
+                {
+                    var cObject = CObject.New();
+                    cObject.AddData(texture);
+                    cObject.AddData(new Transform(x, y));
+                    cObject.AddData(new PhysicsBody());
+                }
+            }*/
+            
+            
+            var cObject = CObject.New();
+            cObject.AddData(texture);
+            cObject.AddData(new Transform(0, 0));
+            cObject.AddData(new PhysicsBody());
+
+            var cObject2 = CObject.New();
+            cObject2.AddData(texture);
+            cObject2.AddData(new Transform(0, 40));
+            cObject2.AddData(new PhysicsBody());
+
+            /*var time = DateTime.Now;
+            UnmanagedCSharp.Entities.PhysicsTest((in Transform trans1, in Transform trans2) =>
+            {
+                if (trans1.Position.X < trans2.Position.X)
+                    return -1;
+                return 1;
+            });
+            Console.WriteLine((DateTime.Now - time).TotalMilliseconds);
+            throw new Exception();*/
         }
     }
 

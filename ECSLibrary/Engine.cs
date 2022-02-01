@@ -60,6 +60,7 @@ namespace ECS.Library
                 //Collection.AddNewSubsystem(typeof(PlayerSubsystem));
                 //Collection.AddNewSubsystem(typeof(ControlInputSubsystem));
                 Collection.AddNewSubsystem(typeof(PhysicsSubsystem));
+                Collection.AddNewSubsystem(typeof(CollisionSubsystem));
                 AddNewDataType<Texture>();
                 AddNewDataType<Transform>();
                 AddNewDataType<PhysicsBody>();
@@ -181,6 +182,19 @@ namespace ECS.Library
                 }
 
                 transform.Position += body.Velocity * deltaSeconds;
+            });
+        }
+    }
+
+    public class CollisionSubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.PhysicsTest((in Transform trans1, in Transform trans2) =>
+            {
+                if (trans1.Position.X < trans2.Position.X)
+                    return -1;
+                return 1;
             });
         }
     }
