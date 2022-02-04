@@ -1,10 +1,10 @@
 #pragma warning disable IDE0022, IDE0009
 
-using ECS;
-using ECS.Graphics;
-using ECS.Window;
-using ECS.Maths;
-using ECS.Physics;
+using ECS; // Main namespace
+using ECS.Graphics; // Includes textures and transforms
+using ECS.Window; // Includes engine window / input events
+using ECS.Maths; // Includes maths equations and constants
+using ECS.Physics; // Includes physics bodies
 
 using System;
 using System.Linq;
@@ -36,14 +36,19 @@ namespace ECS.Library
 
         internal EngineWindow ThisWindow = null;
         public abstract void Initialise();
-        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new SFML.Window.VideoMode(800, 600), "Window");
+        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false);
         private void GameLoop() // might make "public virtual"
         {
-            foreach (var subsystem in Collection.Subsystems)
+            for (int i = 0; i < Collection.Subsystems.Count; i++)
             {
-                var time = DateTime.Now;
-                subsystem.Update(Time.DeltaTime);
-                Console.WriteLine(subsystem.Name + ": " + ( DateTime.Now - time ).TotalMilliseconds);
+                var subsystem = Collection.Subsystems[i];
+                if (subsystem.IsEnabled)
+                {
+                    var time = DateTime.Now;
+                    subsystem.Update(Time.DeltaTime);
+                    var now = DateTime.Now;
+                    Console.WriteLine(subsystem.Name + ": " + ( now - time ).TotalMilliseconds);
+                }
             }
         }
         public static void Start(Type engineType)
@@ -51,24 +56,23 @@ namespace ECS.Library
             if (engineType.IsSubclassOf(typeof(Engine)))
             {
                 MainEngine = (Engine)Activator.CreateInstance(engineType);
-                MainEngine.ThisWindow = new EngineWindow(MainEngine.Settings.VideoMode, MainEngine.Settings.WindowName);
+                MainEngine.ThisWindow = new EngineWindow(new VideoMode(MainEngine.Settings.WindowDimensions), MainEngine.Settings.WindowName);
                 Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
                 Collection.AddNewSubsystem(typeof(RenderSubsystem));
-                //Collection.AddNewSubsystem(typeof(MovementSubsystem));
-                Collection.AddNewSubsystem(typeof(ColorRandomiserSubsystem));
-                //Collection.AddNewSubsystem(typeof(ColorGradientSubsystem));
-                //Collection.AddNewSubsystem(typeof(PlayerSubsystem));
-                //Collection.AddNewSubsystem(typeof(ControlInputSubsystem));
-                Collection.AddNewSubsystem(typeof(PhysicsSubsystem));
-                Collection.AddNewSubsystem(typeof(CollisionSubsystem));
                 AddNewDataType<Texture>();
                 AddNewDataType<Transform>();
-                AddNewDataType<PhysicsBody>();
-                //AddNewDataType<PlayerData>();
-                /*foreach (var subsystem in Collection.Subsystems)
+                if (MainEngine.Settings.EnablePhysics)
                 {
-                    subsystem.Startup();
-                }*/
+                    AddNewDataType<PhysicsBody>();
+                    Collection.AddNewSubsystem(typeof(PhysicsSubsystem));
+                }
+                if(MainEngine.Settings.EnableCollisions)
+                {
+                    AddNewDataType<Collider>();
+                    Collection.AddNewSubsystem(typeof(CollisionSubsystem));
+                }
+                // Other
+                Collection.AddNewSubsystem(typeof(ColourGradientSubsystem));
                 MainEngine.Initialise();
                 while (MainWindow.IsOpen)
                 {
@@ -88,16 +92,20 @@ namespace ECS.Library
         public int ObjectTableSize;
         public int DataTableSize;
         public int TextureTableSize;
-        public VideoMode VideoMode;
+        public Vector2u WindowDimensions;
         public string WindowName;
-        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, VideoMode mode, string name)
+        public bool EnablePhysics;
+        public bool EnableCollisions;
+        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, Vector2u window_dimensions, string name, bool enable_physics, bool enable_collisions)
         {
             MainTableSize = mSize;
             ObjectTableSize = otSize;
             DataTableSize = dtSize;
             TextureTableSize = texSize;
-            VideoMode = mode;
+            WindowDimensions = window_dimensions;
             WindowName = name;
+            EnablePhysics = enable_physics;
+            EnableCollisions = enable_collisions;
         }
     }
     public static class Collection
@@ -105,7 +113,7 @@ namespace ECS.Library
         internal static readonly List<Subsystem> Subsystems = new List<Subsystem>();
         internal static void AddNewSubsystem(Type type)
         {
-            if (type.IsSubclassOf(typeof(Subsystem)))
+            if (type.IsSubclassOf(typeof(Subsystem)) && !Subsystems.Any(x => x.GetType() == type))
             {
                 Subsystems.Add((Subsystem)Activator.CreateInstance(type));
             }
@@ -113,24 +121,19 @@ namespace ECS.Library
     }
     public abstract class Subsystem
     {
-        internal Subsystem()
+        public static RefObjectTable Entities => UnmanagedCSharp.Entities;
+        public static void AddNewDataType<T>() where T : unmanaged => UnmanagedCSharp.AddNewDataType<T>();
+        public static void AddNewSubsystem(Type type) => Collection.AddNewSubsystem(type);
+
+        public Subsystem()
         {
             Name = GetType().Name;
         }
         public readonly string Name;
+        public bool IsEnabled { get; set; } = true;
         public abstract void Update(float deltaSeconds);
     }
-    public class MovementSubsystem : Subsystem
-    {
-        public override void Update(float deltaSeconds)
-        {
-            Entities.Iterate((ref Transform transform) =>
-            {
-                transform.Position += new Vector2f(0.1f, 0.1f);
-            });
-        }
-    }
-    public class RenderSubsystem : Subsystem
+    public sealed class RenderSubsystem : Subsystem
     {
         public override void Update(float deltaSeconds)
         {
@@ -141,34 +144,16 @@ namespace ECS.Library
             });
         }
     }
-    
-
-    public class ColorRandomiserSubsystem : Subsystem
-    {
-        private float Timer = 0f;
-        public override void Update(float deltaSeconds)
-        {
-            Timer += deltaSeconds;
-            if (Timer > 1f)
-            {
-                Entities.Iterate((ref Texture texture) =>
-                {
-                    texture.RandomiseColor();
-                });
-                Timer = 0f;
-            }
-        }
-    }
 
     public class PhysicsSubsystem : Subsystem
     {
-        private Vector2u Window = new Vector2u(Engine.MainEngine.Settings.VideoMode.Width, Engine.MainEngine.Settings.VideoMode.Height);
+        private Vector2u Window = Engine.MainEngine.Settings.WindowDimensions;
         public override void Update(float deltaSeconds)
         {
-            Entities.Iterate((ref PhysicsBody body, ref Transform transform, ref Texture texture) =>
+            Entities.Iterate((ref PhysicsBody body, ref Transform transform) =>
             {
-                var size = texture.GetSize;
-
+                var size = transform.Size / 2;
+                
                 body.Velocity += Constants.Gravity * deltaSeconds;
 
                 if(transform.Position.Y + size.Y > Window.Y || transform.Position.Y < 0)
@@ -190,132 +175,31 @@ namespace ECS.Library
     {
         public override void Update(float deltaSeconds)
         {
-            Entities.PhysicsTest((in Transform trans1, in Transform trans2) =>
-            {
-                if (trans1.Position.X < trans2.Position.X)
-                    return -1;
-                return 1;
-            });
+            List<Collision> collisions = Entities.CollisionQuery();
+            Console.WriteLine(collisions.Count);
         }
     }
 
-    /*
-    public struct PlayerData : IComponentData
-    {
-        public int Health;
-    }
-    public class ControlInputSubsystem : Subsystem
-    {
-        public Key Current => Engine.MainWindow.CurrentKey;
-        public override void Update(float deltaSeconds)
-        {
-            Entities.Iterate((ref PlayerData playerData, ref Transform transform) =>
-            {
-                if (Current == Key.W)
-                {
-                    transform.Position += new Vector2f(0, -1f);
-                }
-                if (Current == Key.S)
-                {
-                    transform.Position += new Vector2f(0, 1f);
-                }
-                if (Current == Key.A)
-                {
-                    transform.Position += new Vector2f(-1f, 0f);
-                }
-                if (Current == Key.D)
-                {
-                    transform.Position += new Vector2f(1f, 0f);
-                }
-            });
-        }
-    }
-
-
-    /*
-    public abstract class Subsystem<Data0> : Subsystem where Data0 : IComponentData
-    {
-        //protected RefDataTable RefTable0;
-        //protected RefObjectTable RefTable0;
-        public override void Startup()
-        {
-            //RefTable0 = RefDataTable.CreateFromUnknownType<Data0>();
-            //RefTable0 = RefObjectTable.New();
-        }
-    }
-    public class MovementSubsystem : Subsystem<Transform>
+    #region Other Subsystems
+    public class MovementSubsystem : Subsystem
     {
         public override void Update(float deltaSeconds)
         {
-            RefObjects.IterateTable((ref Transform transform) =>
+            Entities.Iterate((ref Transform transform) =>
             {
                 transform.Position += new Vector2f(0.1f, 0.1f);
             });
         }
     }
-    public abstract class Subsystem<Data0, Data1> : Subsystem where Data0 : IComponentData where Data1 : IComponentData
-    {
-        //protected RefDataTable RefTable0;
-        //protected RefDataTable RefTable1;
-        public override void Startup()
-        {
-            //RefTable0 = RefDataTable.CreateFromUnknownType<Data0>();
-            //RefTable1 = RefDataTable.CreateFromUnknownType<Data1>();
-        }
-    }
-    public class RenderSubsystem : Subsystem<Texture, Transform>
-    {
-        public override void Update(float deltaSeconds)
-        {
-            RefObjects.IterateTable((ref Texture texture, ref Transform transform) =>
-            {
-                var states = new RenderStates(transform.SFMLTransform);
-                texture.Draw(Engine.MainWindow, states);
-            });
-        }
-    }
-    
-    public struct PlayerData : IComponentData
-    {
-        public int Health;
-    }
-    public class PlayerSubsystem : Subsystem<PlayerData, Transform>
-    {
-        public override void Update(float deltaSeconds)
-        {
-            RefObjects.IterateTable((ref PlayerData player, ref Transform transform) =>
-            {
-                player.Health += 1;
-                if(Engine.MainWindow.CurrentKey == Keyboard.Key.W)
-                {
-                    transform.Position += new Vector2f(0, -10f);
-                }
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.S)
-                {
-                    transform.Position += new Vector2f(0, 10f);
-                }
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.A)
-                {
-                    transform.Position += new Vector2f(-10f, 0f);
-                }
-                if (Engine.MainWindow.CurrentKey == Keyboard.Key.D)
-                {
-                    transform.Position += new Vector2f(10f, 0f);
-                }
-                Console.WriteLine(player.Health);
-            });
-        }
-    }
-    
-    public class ColorRandomiserSubsystem : Subsystem<Texture>
+    public class ColorRandomiserSubsystem : Subsystem
     {
         private float Timer = 0f;
         public override void Update(float deltaSeconds)
         {
             Timer += deltaSeconds;
-            if(Timer > 1f)
+            if (Timer > 1f)
             {
-                RefObjects.IterateTable((ref Texture texture) =>
+                Entities.Iterate((ref Texture texture) =>
                 {
                     texture.RandomiseColor();
                 });
@@ -323,5 +207,18 @@ namespace ECS.Library
             }
         }
     }
-    */
+    public class ColourGradientSubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref Texture texture, ref Transform transform) =>
+            {
+                var height = (byte)Math.Clamp(transform.Position.Y, 0, 255);
+
+                texture.SetColor(new Color(height, height, height));
+            });
+        }
+    }
+    #endregion Other Subsystems
+
 }

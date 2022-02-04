@@ -12,6 +12,7 @@ using SFML.Window;
 using SFML.Graphics;
 using SFML.System;
 
+using ECS.Collision;
 using ECS.Graphics;
 using ECS.Physics;
 
@@ -20,279 +21,6 @@ namespace ECS
     using static CAllocation;
     using static Debug;
     using static UnmanagedCSharp;
-    /*
-    public class ReadOnlyDictionary<TKey, TValue> : IDictionary<TKey, TValue>
-    {
-        private Dictionary<TKey, TValue> _dictionary = new Dictionary<TKey, TValue>();
-        public ReadOnlyDictionary(Dictionary<TKey, TValue> dictionary) => _dictionary = dictionary;
-        public TValue this[TKey key] { get => _dictionary[key]; set => _dictionary[key] = value; }
-        public ICollection<TKey> Keys => _dictionary.Keys;
-        public ICollection<TValue> Values => _dictionary.Values;
-        public int Count => _dictionary.Count;
-        public bool IsReadOnly => true;
-
-        #region Readonly: Not Allowed
-        public void Add(TKey key, TValue value) => throw new NotImplementedException();
-        public void Add(KeyValuePair<TKey, TValue> item) => throw new NotImplementedException();
-        public void Clear() => throw new NotImplementedException();
-        public bool Remove(TKey key) => throw new NotImplementedException();
-        public bool Remove(KeyValuePair<TKey, TValue> item) => throw new NotImplementedException();
-        public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex) => throw new NotImplementedException();
-        #endregion Readonly: Not Allowed
-
-        public bool Contains(KeyValuePair<TKey, TValue> item) => _dictionary.Contains(item);
-        public bool ContainsKey(TKey key) => _dictionary.ContainsKey(key);
-        public bool TryGetValue(TKey key, out TValue value) => _dictionary.TryGetValue(key, out value);
-        public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator() => _dictionary.GetEnumerator();
-        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-    public class ReadOnlyList<T> : IList<T>
-    {
-        private List<T> _list = new List<T>();
-        public ReadOnlyList(List<T> list) => _list = list;
-        public T this[int index] { get => _list[index]; set => _list[index] = value; }
-        public int Count => _list.Count;
-        public bool IsReadOnly => true;
-
-        #region Readonly: Not Allowed
-        public void Add(T item) => throw new NotImplementedException();
-        public void Clear() => throw new NotImplementedException();
-        public void CopyTo(T[] array, int arrayIndex) => throw new NotImplementedException();
-        public void Insert(int index, T item) => throw new NotImplementedException();
-        public bool Remove(T item) => throw new NotImplementedException();
-        public void RemoveAt(int index) => throw new NotImplementedException();
-        #endregion Readonly: Not Allowed
-
-        public bool Contains(T item) => _list.Contains(item);
-        public IEnumerator<T> GetEnumerator() => _list.GetEnumerator();
-        public int IndexOf(T item) => _list.IndexOf(item);
-        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
-    public class ReadOnlyComponentDataList
-    {
-        private readonly ComponentDataList _list = null;
-        private ReadOnlyComponentDataList() { }
-        public ReadOnlyComponentDataList(ComponentDataList list) { _list = list; }
-        public ObjectDataPair this[int index]
-        {
-            get => _list[index];
-        }
-        public int Capacity => _list.Capacity;
-    }
-    public class ComponentDataList
-    {
-        private readonly Dictionary<CObject, int> CObjectIndexes = new Dictionary<CObject, int>();
-        private ObjectDataPair[] componentDataPairs = new ObjectDataPair[1];
-        //public int Count => throw new NotImplementedException();
-        //public bool IsReadOnly => throw new NotImplementedException();
-        //public void Add(T item) => throw new NotImplementedException();
-        //public void Clear() => throw new NotImplementedException();
-        //public bool Contains(T item) => throw new NotImplementedException();
-        //public int IndexOf(T item) => throw new NotImplementedException();
-        //public void Insert(int index, T item) => throw new NotImplementedException();
-        //public bool Remove(T item) => throw new NotImplementedException();
-        //public void RemoveAt(int index) => throw new NotImplementedException();
-
-        public ObjectDataPair this[int index]
-        {
-            get => componentDataPairs[index];
-            set => componentDataPairs[index] = value;
-        }
-
-        public ComponentData this[CObject cObject]
-        {
-            get => componentDataPairs[CObjectIndexes[cObject]].Value;
-            //set => componentDataPairs[CObjectIndexes[cObject]].Value = value;
-            set
-            {
-                unsafe
-                {
-                    fixed (ComponentData* ptr = &componentDataPairs[CObjectIndexes[cObject]].Value)
-                    {
-                        if(ptr->DataPointer != value.DataPointer)
-                        {
-                            ptr->Dispose();
-                        }
-                        *ptr = value;
-                    }
-                }
-            }
-        }
-        public int Capacity => componentDataPairs.Length;
-        public bool IsReadOnly => false;
-
-        private int next = 0;
-        public void Add(CObject cObject, ComponentData data)
-        {
-            if(!CObjectIndexes.ContainsKey(cObject))
-            {
-                CObjectIndexes.Add(cObject, next);
-                if(next >= componentDataPairs.Length)
-                {
-                    var new_arr = new ObjectDataPair[componentDataPairs.Length * 2];
-                    Array.Copy(componentDataPairs, new_arr, componentDataPairs.Length);
-                    componentDataPairs = new_arr;
-                }
-                componentDataPairs[next++] = new ObjectDataPair(cObject, data);
-            }
-        }
-        public bool Contains(CObject cObject) => this.CObjectIndexes.ContainsKey(cObject);
-        public void Remove(CObject cObject)
-        {
-            if(CObjectIndexes.TryGetValue(cObject, out var index))
-            {
-                CObjectIndexes.Remove(cObject);
-                componentDataPairs[index].Value.Dispose();
-                componentDataPairs[index].Value = new ComponentData();
-            }
-        }
-    }
-    public struct ObjectDataPair
-    {
-        public CObject Key;
-        public ComponentData Value;
-        public ObjectDataPair(CObject key, ComponentData value)
-        {
-            Key = key;
-            Value = value;
-        }
-    }
-    */
-    /*
-    public struct ComponentData<T> : IDisposable, IComponentData where T : unmanaged
-    {
-        public bool IsInitialised { get; private set; }
-        internal int DataType;
-        internal IntPtr DataPointer;
-        public T ReadData()
-        {
-            if (DataType != 0)
-            {
-                unsafe
-                {
-                    return *(T*)DataPointer;
-                }
-            }
-            return default;
-            //throw new Exception("Read Data error: data types did not match.");
-        }
-        public void WriteData(T data)
-        {;
-            if (DataType != 0)
-            {
-                unsafe
-                {
-                    *(T*)DataPointer = data;
-                }
-                return;
-            }
-            //throw new Exception("Write Data error: data types did not match.");
-        }
-        public void Dispose()
-        {
-            DataType = 0;
-            IsInitialised = false;
-            if (DataPointer != IntPtr.Zero)
-            {
-                CAllocation.Free(DataPointer);
-            }
-        }
-        public static ComponentData<T> New()
-        {
-            var data = new ComponentData<T>();
-            var type = typeof(T);
-            if (!typeof(IComponentData).IsAssignableFrom(type))
-            {
-                throw new Exception("Data type error");
-            }
-            data.DataType = type.GetHashCode();
-            data.IsInitialised = true;
-            unsafe
-            {
-                data.DataPointer = CAllocation.Malloc(sizeof(T));
-                CAllocation.MemSet(data.DataPointer, 0, sizeof(T));
-            }
-            return data;
-        }
-        public static ComponentData<T> New(ComponentData comp_data)
-        {
-            var data = new ComponentData<T>();
-            var type = typeof(T);
-            if (!typeof(IComponentData).IsAssignableFrom(type))
-            {
-                throw new Exception("Data type error");
-            }
-            if(comp_data.DataType == type.GetHashCode())
-            {
-                data.DataType = comp_data.DataType;
-                data.IsInitialised = true;
-                data.DataPointer = comp_data.DataPointer;
-                return data;
-            }
-            return default;
-        }
-    }*/
-    /*
-    public struct ComponentData : IDisposable, IComponentData
-    {
-        public bool IsInitialised { get; private set; }
-        internal int DataType;
-        internal IntPtr DataPointer;
-        public T ReadData<T>() where T : unmanaged
-        {
-            var hash = typeof(T).GetHashCode();
-            if (DataType != 0 && DataType == hash)
-            {
-                unsafe
-                {
-                    return *(T*)DataPointer;
-                }
-            }
-            return default;
-            //throw new Exception("Read Data error: data types did not match.");
-        }
-        public void WriteData<T>(T data) where T : unmanaged
-        {
-            var hash = typeof(T).GetHashCode();
-            if (DataType != 0 && DataType == hash)
-            {
-                unsafe
-                {
-                    *(T*)DataPointer = data;
-                }
-                return;
-            }
-
-            //throw new Exception("Write Data error: data types did not match.");
-        }
-        public void Dispose()
-        {
-            DataType = 0;
-            IsInitialised = false;
-            if (DataPointer != IntPtr.Zero)
-            {
-                CAllocation.Free(DataPointer);
-            }
-        }
-        public static ComponentData New<T>() where T : unmanaged
-        {
-            var data = new ComponentData();
-            var type = typeof(T);
-            if (!typeof(IComponentData).IsAssignableFrom(type))
-            {
-                throw new Exception("Data type error");
-            }
-            data.DataType = type.GetHashCode();
-            data.IsInitialised = true;
-            unsafe
-            {
-                data.DataPointer = CAllocation.Malloc(sizeof(T));
-                CAllocation.MemSet(data.DataPointer, 0, sizeof(T));
-            }
-            return data;
-        }
-    }*/
     public interface IComponentData { }
     public static class Debug
     {
@@ -415,16 +143,20 @@ namespace ECS
     }
     public static unsafe class UnmanagedCSharp
     {
-        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, physics will be 2, so should be 3
+        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, so should be 2
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
         internal static LookupTable* TablePtr => (LookupTable*)Table;
         internal static ObjectTable* ObjectTablePtr => (ObjectTable*)*&TablePtr->Value0;
         internal static TextureTable* TextureTablePtr => (TextureTable*)*((&TablePtr->Value0) + 1);
-        internal static PhysicsQueryTable* PhysicsQueryTablePtr => (PhysicsQueryTable*)*((&TablePtr->Value0) + 2);
+        internal static AABBTree* Tree => (AABBTree*)*((&TablePtr->Value0) + 2);
+
+        internal static Thread ProgenitorThread = null;
 
         private static RefObjectTable refObjects = default;
         public static RefObjectTable Entities => refObjects;
+
+
         internal static DataTable* GetDataTable(int index)
         {
             if (index < DataTableStartIndex || index >= TablePtr->Entries) // skip object table
@@ -444,10 +176,11 @@ namespace ECS
 
         public static void Entry(int mainSize = 4, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 10)
         {
+            ProgenitorThread = Thread.CurrentThread;
             CreateMainTable(mainSize + DataTableStartIndex);
             CreateObjectTable(objectSize);
             CreateTextureTable(textureSize);
-            CreatePhysicsTable(objectSize);
+            CreateTree(objectSize);
             refObjects = RefObjectTable.New();
             DefaultDataTableSize = defaultDataSize;
         }
@@ -473,17 +206,13 @@ namespace ECS
             }
             CreateDataTable<T>(DefaultDataTableSize);
         }
-        private static void CreatePhysicsTable(int size = 1024)
+        private static void CreateTree(int size = 1024)
         {
-            var bytes = ( sizeof(int) * 3 ) + (sizeof(IntPtr) * 2) + ( sizeof(CObject*) * size );
+            var bytes = sizeof(AABBTree);
             var entry = Malloc(bytes);
             MemSet(entry, 0, bytes);
-            var table = (PhysicsQueryTable*)entry;
-            *table = new PhysicsQueryTable();
-            table->Entries = 0;
-            table->MaxSize = size;
-            table->AllocatedBytes = size;
-            table->CreateCollisionTables();
+            var tree = (AABBTree*)entry;
+            *tree = new AABBTree(size);//AABBTree.New(null);
             TablePtr->SetNext(entry);
         }
         private static void CreateMainTable(int size = 1024)
@@ -616,163 +345,6 @@ namespace ECS
             }
             public void SetNext(IntPtr new_ptr) => SetPointerAtIndex(Entries++, new_ptr);
         }
-        internal struct PhysicsQueryTable
-        {
-            public int Entries;
-            public int MaxSize;
-            public int AllocatedBytes;
-            private IntPtr LocalIntervals;
-            private IntPtr LocalCollisions;
-            public CObject* FixedValue0;
-
-            public void Clear()
-            {
-                fixed(CObject** ptr = &this.FixedValue0)
-                {
-                    MemSet((IntPtr)ptr, 0, this.MaxSize);
-                    this.Entries = 0;
-                }
-            }
-            public void AddNext(CObject* ptr)
-            {
-                fixed (CObject** ptr_ptr = &this.FixedValue0)
-                {
-                    *( ptr_ptr + Entries++ ) = ptr;
-                }
-            }
-            public void SelectionSort(Compare<Transform> comparer)
-            {
-                fixed (CObject** ptr = &this.FixedValue0)
-                {
-                    for (int iterations = 0; iterations < this.Entries - 1; iterations++)
-                    {
-                        int lowest = iterations;
-                        for (int i = iterations + 1; i < this.Entries; i++)
-                        {
-                            if(comparer(in *ptr[i]->GetDataPointer<Transform>(), in *ptr[lowest]->GetDataPointer<Transform>()) < 0) // == -1
-                                lowest = i;
-                        }
-                        var temp = ptr[iterations];
-                        ptr[iterations] = ptr[lowest];
-                        ptr[lowest] = temp;
-                    }
-                }
-            }
-            private struct Collision
-            {
-                public bool Checkable;
-                public CObject* Collider1;
-                public CObject* Collider2;
-                public Collision(CObject* _1, CObject* _2)
-                {
-                    Collider1 = _1;
-                    Collider2 = _2;
-                    Checkable = true;
-                }
-
-                public void Resolve()
-                {
-                    var rect = Collider1->GetDataPointer<Transform>()->GetGlobalBounds(Collider1->GetDataPointer<Texture>()->GetLocalBounds());
-                    var rect_2 = Collider2->GetDataPointer<Transform>()->GetGlobalBounds(Collider2->GetDataPointer<Texture>()->GetLocalBounds());
-                    if(rect.Intersects(rect_2))
-                    {
-                        Console.WriteLine("Collision");
-                    }
-                }
-            }
-            private struct LocalArray
-            {
-                public int Entries;
-                public int MaxSize;
-                public int AllocatedBytes;
-                public byte Items;
-
-                public void AddNext<T>(T data) where T : unmanaged
-                {
-                    fixed(byte* ptr = &Items)
-                    {
-                        var t_ptr = (T*)ptr;
-                        *( t_ptr + Entries++ ) = data;
-                    }
-                }
-                public void RemoveLast<T>() where T : unmanaged
-                {
-                    if (Entries == 0)
-                        return;
-                    fixed (byte* ptr = &Items)
-                    {
-                        var t_ptr = (T*)ptr + Entries;
-                        MemSet((IntPtr)t_ptr, 0, sizeof(T));
-                        Entries--;
-                    }
-                }
-                public T Get<T>(int index) where T : unmanaged
-                {
-                    if (index < 0 || index >= MaxSize)
-                        throw new ArgumentOutOfRangeException("index");
-                    fixed (byte* ptr = &Items)
-                    {
-                        return *((T*)ptr + index);
-                    }
-                }
-                public void Clear()
-                {
-                    fixed (byte* ptr = &Items)
-                    {
-                        MemSet((IntPtr)ptr, 0, this.MaxSize);
-                        Entries = 0;
-                    }
-                }
-
-                public static IntPtr New<T>(int size = 10) where T : unmanaged
-                {
-                    var bytes = (sizeof(int) * 3) + (sizeof(T) * size);
-                    var entry = Malloc(bytes);
-                    MemSet(entry, 0, bytes);
-                    var array = (LocalArray*)entry;
-                    array->Entries = 0;
-                    array->MaxSize = size;
-                    array->AllocatedBytes = bytes;
-                    return entry;
-                }
-            }
-            public void CreateCollisionTables()
-            {
-                var size = this.MaxSize;
-                LocalIntervals = LocalArray.New<IntPtr>(size); // can't use CObject* as generic
-                LocalCollisions = LocalArray.New<Collision>(size);
-            }
-            public void CollisionQuery() // assume T is Transform, X Axis, Sweep and Prune
-            {
-                fixed (CObject** ptr = &this.FixedValue0)
-                {
-                    for (int i = 0; i < this.Entries; i++) // Axis list
-                    {
-                        for (int j = 0; j < ( (LocalArray*)LocalIntervals )->Entries; j++)
-                        {
-                            var get_left = ptr[i]->GetDataPointer<Transform>()->Position + (Vector2f)( ptr[i]->GetDataPointer<Texture>()->Size / 2 );
-                            var other = (CObject*)( (LocalArray*)LocalIntervals )->Get<IntPtr>(j);
-                            var get_right = other->GetDataPointer<Transform>()->Position + (Vector2f)other->GetDataPointer<Texture>()->Size;
-                            if (get_left.X > get_right.X)
-                            {
-                                ( (LocalArray*)LocalIntervals )->RemoveLast<IntPtr>();
-                            }
-                        }
-                        for (int k = 0; k < ( (LocalArray*)LocalIntervals )->Entries; k++)
-                        {
-                            ( (LocalArray*)LocalCollisions )->AddNext(new Collision(ptr[i], (CObject*)( (LocalArray*)LocalIntervals )->Get<IntPtr>(k)));
-                        }
-                        ( (LocalArray*)LocalIntervals )->AddNext((IntPtr)ptr[i]);
-                    }
-                    for(int i = 0; i < ((LocalArray*)LocalCollisions )->Entries; i++)
-                    {
-                        ( (LocalArray*)LocalCollisions )->Get<Collision>(i).Resolve();
-                    }
-                    ( (LocalArray*)LocalIntervals )->Clear();
-                    ( (LocalArray*)LocalCollisions )->Clear();
-                }
-            }
-        }
         internal struct ObjectTable
         {
             public int Entries;
@@ -822,37 +394,6 @@ namespace ECS
                     MemSet((IntPtr)destroyed, 0, sizeof(CObject));
                     Entries--;
                 }
-            }
-
-            public void PhysicsTest(Compare<Transform> comparer, bool multi_threaded = false)
-            {
-                var type = typeof(Transform).GetHashCode();
-                var type2 = typeof(PhysicsBody).GetHashCode();
-                var table = GetDataTableOf(type);
-                var counter = 0;
-                fixed (CObject* object_ptr = &this.Value0)
-                {
-                    for (int i = 0; i < this.MaxSize; i++)
-                    {
-                        var cObject = object_ptr + i;
-                        if (cObject->HasDataOf(type) is int _int && _int != -1 && cObject->HasDataOf(type2) is int _int2 && _int2 != -1)
-                        {
-                            PhysicsQueryTablePtr->AddNext(object_ptr + counter++);
-                        }
-                        else if (counter >= table->Entries)//(i > this.Entries)
-                        {
-                            // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
-                            break;
-                        }
-                    }
-                    PhysicsQueryTablePtr->SelectionSort(comparer);
-
-                    PhysicsQueryTablePtr->CollisionQuery();
-
-                    PhysicsQueryTablePtr->Clear();
-                }
-
-                
             }
 
             public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
@@ -948,6 +489,75 @@ namespace ECS
                     
                 }
             }
+
+            public List<Collision> CollisionQuery(bool multi_threaded = false)
+            {
+                var type = typeof(Transform).GetHashCode();
+                var type2 = typeof(Collider).GetHashCode();
+
+                var table = GetDataTableOf(type);
+                var table2 = GetDataTableOf(type2);
+
+                var size = Math.Min(table->Entries, table2->Entries);
+
+                var counter = 0;
+
+                List<Collision> Collisions = new List<Collision>();
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if ((cObject->HasDataOf(type) is int _int && _int != -1 ) && ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ))
+                        {
+                            Collider* data = ( (MetaCObject*)cObject->MetaPtr )->GetRef(_int2)->ExposeData<Collider>();
+                            if(!data->IsInTree)
+                            {
+                                Tree->InsertObject(cObject);
+                                data->IsInTree = true;
+                            }
+                            else
+                            {
+                                Tree->UpdateObject(cObject);
+                            }
+                            counter++;
+                        }
+                        else if (counter >= size)
+                        {
+                            break;
+                        }
+                    }
+                    // Return collisions
+                    counter = 0;
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (( cObject->HasDataOf(type) is int _int && _int != -1 ) && ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ))
+                        {
+                            if (Tree->QueryOverlaps(cObject) is List<CObject> list && list.Count > 0)
+                                for (int j = 0; j < list.Count; j++)
+                                    Collisions.Add(new Collision(cObject, list[j]));
+                            counter++;
+                        }
+                        else if (counter >= size)
+                        {
+                            break;
+                        }
+                    }
+                }
+                return Collisions;
+            }
+          
+        }
+        public struct Collision
+        {
+            public CObject This;
+            public CObject Other;
+            internal Collision(CObject* _this, CObject _other)
+            {
+                This = *_this;
+                Other = _other;
+            }
         }
         public struct RefObjectTable
         {
@@ -976,12 +586,16 @@ namespace ECS
             {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
-
-            public void PhysicsTest(Compare<Transform> comparer)
+            /*
+            public void CollisionIteration(Compare<Transform> comparer)
             {
-                ( (ObjectTable*)table )->PhysicsTest(comparer);
+                ( (ObjectTable*)table )->CollisionCheck(comparer);
             }
-
+            */
+            public List<Collision> CollisionQuery()
+            {
+                return ( (ObjectTable*)table )->CollisionQuery();
+            }
             public static RefObjectTable New()
             {
                 var refTable = new RefObjectTable()
@@ -1436,12 +1050,15 @@ namespace ECS
                 {
                     for (int i = 0; i < this.MaxSize; i++)
                     {
-                        Data* data = (Data*)ptr;
-                        if (data->IsValid)
+                        var int_ptr = *( ptr + i );
+                        if(int_ptr != IntPtr.Zero)
                         {
-                            Data.Destroy(*data);
+                            Data* data = (Data*)int_ptr;
+                            if (data->IsValid)
+                            {
+                                Data.Destroy(*data);
+                            }
                         }
-                        //*ptr = IntPtr.Zero;
                     }
                 }
             }
@@ -1519,6 +1136,20 @@ namespace ECS.Graphics
     using static UnmanagedCSharp;
     public struct Transform : IComponentData
     {
+        public Vector2u Size
+        {
+            get
+            {
+                return mySize;
+            }
+            set
+            {
+                mySize = value;
+                //myBounds = new FloatRect(new Vector2f(), (Vector2f)value);
+                myTransformNeedUpdate = true;
+                myInverseNeedUpdate = true;
+            }
+        }
         public Vector2f Position
         {
             get
@@ -1608,11 +1239,12 @@ namespace ECS.Graphics
                 return myInverseTransform;
             }
         }
-        public FloatRect GetGlobalBounds(FloatRect localBounds) => SFMLTransform.TransformRect(localBounds);
-        public Transform(float x, float y) : this(new Vector2f(x, y)) { }
-        public Transform(Vector2f position)
+        public Transform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width)) { }
+        public Transform(Vector2f position, Vector2u size)
         {
-            myOrigin = new Vector2f();//new Vector2f(0.5f, 0.5f);
+            mySize = size;
+            //myBounds = new FloatRect(new Vector2f(), (Vector2f)size);
+            myOrigin = (Vector2f)size / 2;
             myPosition = position;
             myRotation = 0;
             myScale = new Vector2f(1, 1);
@@ -1621,7 +1253,12 @@ namespace ECS.Graphics
             myTransform = default;
             myInverseTransform = default;
         }
+        //public FloatRect GetGlobalBounds() => SFMLTransform.TransformRect(myBounds);
+        //public FloatRect GetLocalBounds() => myBounds;
+        //private FloatRect myBounds;
 
+        public AABB BoundingBox => new AABB(myPosition.X, myPosition.Y, myPosition.X + mySize.X, myPosition.Y + mySize.Y);
+        private Vector2u mySize;
         private Vector2f myOrigin;// = new Vector2f(0, 0);
         private Vector2f myPosition;// = new Vector2f(0, 0);
         private float myRotation;// = 0;
@@ -1634,16 +1271,12 @@ namespace ECS.Graphics
     public unsafe struct Texture : Drawable, IComponentData
     {
         internal Vertex4 Vertices;
-        //internal FloatRect InternalLocalBounds;
-        internal Vector2u Size;
         internal IntPtr TexturePtr;
         internal TextureEntry* Entry => (TextureEntry*)TexturePtr;
         public Texture(string filename)
         {
             TexturePtr = TryAddTexture(filename);
             Vertices = new Vertex4();
-            Size = new Vector2u();
-            //InternalLocalBounds = new FloatRect();
             UpdateTexture(TexturePtr);
         }
         public void UpdateTexture(IntPtr texture)
@@ -1652,19 +1285,18 @@ namespace ECS.Graphics
             {
                 this.TexturePtr = texture;
 
-                Size = Entry->GetSize();
-                Entry->TextureRect = new IntRect(0, 0, Convert.ToInt32(Size.X), Convert.ToInt32(Size.Y));
+                var size = Entry->GetSize();
+                Entry->TextureRect = new IntRect(0, 0, Convert.ToInt32(size.X), Convert.ToInt32(size.Y));
 
-                //var bounds = this.InternalLocalBounds;
                 var left = Convert.ToSingle(Entry->TextureRect.Left);
                 var right = left + Entry->TextureRect.Width;
                 var top = Convert.ToSingle(Entry->TextureRect.Top);
                 var bottom = top + Entry->TextureRect.Height;
 
                 Vertices.Vertex0 = new Vertex(new Vector2f(0, 0), Color.White, new Vector2f(left, top));
-                Vertices.Vertex1 = new Vertex(new Vector2f(0, Size.Y), Color.White, new Vector2f(left, bottom));
-                Vertices.Vertex2 = new Vertex(new Vector2f(Size.X, 0), Color.White, new Vector2f(right, top));
-                Vertices.Vertex3 = new Vertex(new Vector2f(Size.X, Size.Y), Color.White, new Vector2f(right, bottom));
+                Vertices.Vertex1 = new Vertex(new Vector2f(0, size.Y), Color.White, new Vector2f(left, bottom));
+                Vertices.Vertex2 = new Vertex(new Vector2f(size.X, 0), Color.White, new Vector2f(right, top));
+                Vertices.Vertex3 = new Vertex(new Vector2f(size.X, size.Y), Color.White, new Vector2f(right, bottom));
             }
         }
         public Texture ReturnNewTextureWithRandomColor()
@@ -1686,17 +1318,18 @@ namespace ECS.Graphics
             Vertices.Vertex2.Color = color;
             Vertices.Vertex3.Color = color;
         }
+        public Vector2u GetSize => Entry->GetSize();
         public Color GetColor()
         {
             return Vertices.Vertex0.Color;
         }
-        public Vector2u GetSize => Size;
         public void Draw(RenderTarget target, RenderStates states)
         {
+            if (Thread.CurrentThread != ProgenitorThread)
+                throw new Exception("Multi-threaded drawing detected!");
             states.CTexture = Entry->TexturePtr;
             ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);;
         }
-        public FloatRect GetLocalBounds() => new FloatRect(new Vector2f(0, 0), new Vector2f(Size.X, Size.Y));
     }
 }
 namespace ECS.Window
@@ -1733,6 +1366,203 @@ namespace ECS.Maths
     {
         public static readonly Vector2f Gravity = new Vector2f(0, 9.80665f);
     }
+
+    public static class Maths
+    {
+        /// <summary>
+        /// Returns the square distance of 2 vectors. Faster as it does not perform Math.Sqrt.
+        /// </summary>
+        /// <param name="vector1"></param>
+        /// <param name="vector2"></param>
+        /// <returns></returns>
+        public static float SqDistance(this Vector2f vector1, Vector2f vector2) => (float)( Math.Pow(vector2.X - vector1.X, 2) + Math.Pow(vector2.Y - vector1.Y, 2) );
+        /// <summary>
+        /// Gets the distance between 2 vectors. Slower as it performs Math.Sqrt. Preferably use vector.SqDistance(vector2) if the actual distance is of no concern.
+        /// </summary>
+        /// <param name="vector1"></param>
+        /// <param name="vector2"></param>
+        /// <returns></returns>
+        public static float Distance(this Vector2f vector1, Vector2f vector2) => (float)Math.Sqrt(vector1.SqDistance(vector2));
+        public static float Dot(this Vector2f vector1, Vector2f vector2)
+        {
+            var dotVal = 0f;
+            dotVal += vector1.X * vector2.X;
+            dotVal += vector2.Y * vector2.Y;
+            return dotVal;
+        }
+        public static float SqLength(this Vector2f vector) => (float)( ( vector.X * vector.X ) + ( vector.Y * vector.Y ) );
+        public static float Length(this Vector2f vector) => (float)Math.Sqrt(vector.SqLength());
+        public static Vector2f Center(this FloatRect box) => new Vector2f(box.Left + ( box.Width / 2 ), box.Top + ( box.Height / 2 ));
+        public static Vector2f Normalise(this Vector2f vector)
+        {
+            var length = vector.Length();
+            return new Vector2f(vector.X / length, vector.Y / length);
+        }
+        public static Vector2f Min(this FloatRect box) => new Vector2f(Math.Min(box.Left, box.Left + box.Width), Math.Min(box.Top, box.Top + box.Height));
+        public static Vector2f Max(this FloatRect box) => new Vector2f(Math.Max(box.Left, box.Left + box.Width), Math.Max(box.Top, box.Top + box.Height));
+
+        public static float Min(float a, float b) => Math.Min(a, b);
+        public static float Max(float a, float b) => Math.Max(a, b);
+    }
+
+}
+namespace ECS.Collections
+{
+    using static CAllocation;
+    public static unsafe class Generic
+    {
+        public struct LocalArray<T> : IDisposable where T : unmanaged
+        {
+            public int Entries;
+            public int MaxSize;
+            public int AllocatedBytes;
+            private IntPtr Items;
+            public LocalArray(int size)
+            {
+                Entries = 0;
+                MaxSize = size;
+                AllocatedBytes = ( sizeof(T) * size );
+                Items = Malloc(AllocatedBytes);
+                MemSet(Items, 0, AllocatedBytes);
+            }
+            public LocalArray(int entries, int size) : this(size)
+            {
+                Entries = entries;
+            }
+            private void ReinforceSize(int index)
+            {
+                if (index < 0 || index >= MaxSize)
+                    throw new ArgumentOutOfRangeException(nameof(index));
+            }
+            public T this[int index]
+            {
+                get => ReadAt(index);
+                set => ModifyAt(index, value);
+            }
+            public void Add(T item)
+            {
+                ModifyAt(Entries++, item);
+            }
+            public T* ReadPointerAt(int index)
+            {
+                ReinforceSize(index);
+                fixed (IntPtr* ptr = &Items)
+                {
+                    return ( ( (T*)*ptr ) + index );
+                }
+            }
+            private T ReadAt(int index)
+            {
+                ReinforceSize(index);
+                fixed (IntPtr* ptr = &Items)
+                {
+                    return *( ( (T*)*ptr ) + index );
+                }
+            }
+            public void ModifyAt(int index, T new_data)
+            {
+                ReinforceSize(index);
+                fixed (IntPtr* ptr = &Items)
+                {
+                    *( (T*)*ptr + index ) = new_data;
+                }
+            }
+            public void RemoveAt(int index)
+            {
+                ReinforceSize(index);
+                fixed (IntPtr* ptr = &Items)
+                {
+                    T* start = (T*)*ptr;
+                    for (int i = index; i < Entries; i++)
+                    {
+                        start[i] = start[i + 1];
+                    }
+                    Entries--;
+                }
+            }
+            public void Resize(int size)
+            {
+                IntPtr new_block = Malloc(sizeof(T) * size);
+                MemSet(new_block, 0, sizeof(T) * size);
+                MemMove(new_block, Items, sizeof(T) * MaxSize);
+                Free(Items);
+                Items = new_block;
+                MaxSize = size;
+                AllocatedBytes = sizeof(T) * size;
+            }
+            public void Dispose()
+            {
+                Free(Items);
+            }
+        }
+        // Need to optimise dictionary lookup
+        public struct LocalDictionary<T, U> : IDisposable where T : unmanaged where U : unmanaged
+        {
+            private struct Entry
+            {
+                public T key;
+                public U value;
+                public Entry(T key, U value)
+                {
+                    this.key = key;
+                    this.value = value;
+                }
+            }
+            private LocalArray<Entry> entries;
+            public LocalDictionary(int capacity)
+            {
+                entries = new LocalArray<Entry>(capacity);
+            }
+            public U this[T index]
+            {
+                get
+                {
+                    if (ContainsKey(index) is int _int && _int != -1)
+                        return entries[_int].value;
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                }
+                set
+                {
+                    if (ContainsKey(index) is int _int && _int != -1)
+                    {
+                        entries.ReadPointerAt(_int)->value = value;
+                        return;
+                    }
+                    Add(index, value);
+                }
+            }
+            public int ContainsKey(T key)
+            {
+                for (int i = 0; i < entries.Entries; i++)
+                {
+                    if (entries[i].key.Equals(key))
+                    {
+                        return i;
+                    }
+                }
+                return -1;
+            }
+            public void Add(T key, U value)
+            {
+                if (ContainsKey(key) == -1)
+                {
+                    entries.Add(new Entry(key, value));
+                }
+            }
+            public void Remove(T key)
+            {
+                if (ContainsKey(key) is int _int && _int != -1)
+                {
+                    entries.RemoveAt(_int);
+                }
+            }
+            public void Resize(int size) => entries.Resize(size);
+            public void Dispose()
+            {
+                entries.Dispose();
+            }
+        }
+    }
 }
 namespace ECS.Physics
 {
@@ -1743,12 +1573,427 @@ namespace ECS.Physics
         public Vector2f Velocity;
         public Vector2f Acceleration;
     }
-
-    
-    /*
-    public struct PhysicsCollider
+    public enum ColliderType
     {
-        
+        Square = 0,
     }
-    */
+    public struct Collider : IComponentData
+    {
+        public bool IsInTree;
+        public ColliderType Type;
+    }
+}
+namespace ECS.Collision
+{
+    using static Maths.Maths;
+    using static Collections.Generic;
+    public struct AABB 
+    {
+        public float minX;
+        public float minY;
+        public float maxX;
+        public float maxY;
+        public float SurfaceArea;
+
+        public override string ToString()
+        {
+            return minX + " : " + minY + "\n" + maxX + " : " + maxY;
+        }
+
+        public AABB(float minx, float miny, float maxx, float maxy)
+        {
+            this.minX = minx;
+            this.minY = miny;
+            this.maxX = maxx;
+            this.maxY = maxy;
+            this.SurfaceArea = ( maxX - minX ) * ( maxY - minY );
+        }
+
+        public bool Overlaps(AABB other)
+        {
+            return maxX > other.minX &&
+            minX < other.maxX &&
+            maxY > other.minY &&
+            minY < other.maxY;
+        }
+
+        public bool Contains(AABB other)
+        {
+            return other.minX >= minX &&
+            other.maxX <= maxX &&
+            other.minY >= minY &&
+            other.maxY <= maxY;
+        }
+
+        public AABB Merge(AABB other)
+        {
+            return new AABB(
+            Min(minX, other.minX), Min(minY, other.minY),
+            Max(maxX, other.maxX), Max(maxY, other.maxY));
+        }
+
+        public AABB Intersection(AABB other)
+        {
+            return new AABB(
+            Max(minX, other.minX), Max(minY, other.minY),
+            Min(maxX, other.maxX), Min(maxY, other.maxY));
+        }
+
+        public float GetWidth() => ( maxX - minX );
+        public float GetHeight() => ( maxY - minY );
+
+    }
+    public unsafe struct AABBNode 
+    {
+        public static readonly int NULL_NODE = int.MaxValue;
+
+        public AABB AssociatedAABB;
+        public CObject* ObjectPointer;
+        public int ParentNodeIndex;
+        public int LeftNodeIndex;
+        public int RightNodeIndex;
+        public int NextNodeIndex;
+        public bool IsLeaf() => LeftNodeIndex == NULL_NODE;
+        public static AABBNode New()
+        {
+            AABBNode node = new AABBNode()
+            {
+                AssociatedAABB = default,
+                ObjectPointer = default,
+                ParentNodeIndex = NULL_NODE,
+                LeftNodeIndex = NULL_NODE,
+                RightNodeIndex = NULL_NODE,
+                NextNodeIndex = NULL_NODE,
+            };
+            return node;
+        }
+    }
+    // # https://www.azurefromthetrenches.com/introductory-guide-to-aabb-tree-collision-detection/
+    public unsafe struct AABBTree : IDisposable
+    {
+
+        private LocalDictionary<int, int> map;
+        private LocalArray<AABBNode> nodes;
+        private int rootNodeIndex;
+        private int allocatedNodeCount;
+        private int nextFreeNodeIndex;
+        private int nodeCapacity;
+        private int growthSize;
+
+        public static AABBTree New(AABBTree* original)
+        {
+            var size = 1;
+            if (original != null)
+            {
+                size = original->nodes.MaxSize;
+                original->Dispose();
+            }
+            return new AABBTree(size);
+        }
+
+        public AABBTree(int start_size)
+        {
+            rootNodeIndex = AABBNode.NULL_NODE;
+            allocatedNodeCount = 0;
+            nextFreeNodeIndex = 0;
+            nodeCapacity = start_size;
+            growthSize = start_size;
+            nodes = new LocalArray<AABBNode>(start_size);
+            map = new LocalDictionary<int, int>(start_size);
+            for (int nodeIndex = 0; nodeIndex < start_size; nodeIndex++)
+            {
+                AABBNode node = AABBNode.New();
+                node.NextNodeIndex = nodeIndex + 1;
+                nodes.Add(node);
+            }
+            nodes.ReadPointerAt(start_size - 1)->NextNodeIndex = AABBNode.NULL_NODE;
+        }
+        private int allocateNode()
+        {
+            if (nextFreeNodeIndex == AABBNode.NULL_NODE)
+            {
+                //assert(_allocatedNodeCount == _nodeCapacity);
+
+                nodeCapacity += growthSize;
+                nodes.Resize(nodeCapacity);
+                map.Resize(nodeCapacity);
+                for (int _nodeIndex = allocatedNodeCount; _nodeIndex < nodeCapacity; _nodeIndex++)
+                {
+                    AABBNode node = AABBNode.New();
+                    node.NextNodeIndex = _nodeIndex + 1;
+                    nodes.Add(node);
+                }
+                nodes.ReadPointerAt(nodeCapacity - 1)->NextNodeIndex = AABBNode.NULL_NODE;
+                nextFreeNodeIndex = allocatedNodeCount;
+            }
+
+            int nodeIndex = nextFreeNodeIndex;
+            AABBNode* allocatedNode = nodes.ReadPointerAt(nodeIndex);
+            allocatedNode->ParentNodeIndex = AABBNode.NULL_NODE;
+            allocatedNode->LeftNodeIndex = AABBNode.NULL_NODE;
+            allocatedNode->RightNodeIndex = AABBNode.NULL_NODE;
+            nextFreeNodeIndex = allocatedNode->NextNodeIndex;
+            allocatedNodeCount++;
+
+            return nodeIndex;
+        }
+        private void deallocateNode(int nodeIndex)
+        {
+            AABBNode* deallocatedNode = nodes.ReadPointerAt(nodeIndex);
+            deallocatedNode->NextNodeIndex = nextFreeNodeIndex;
+            nextFreeNodeIndex = nodeIndex;
+            allocatedNodeCount--;
+        }
+
+        private void insertLeaf(int leafNodeIndex)
+        {
+            // make sure we're inserting a new leaf
+            //assert(_nodes[leafNodeIndex].parentNodeIndex == AABB_NULL_NODE);
+            //assert(_nodes[leafNodeIndex].leftNodeIndex == AABB_NULL_NODE);
+            //assert(_nodes[leafNodeIndex].rightNodeIndex == AABB_NULL_NODE);
+
+            // if the tree is empty then we make the root the leaf
+            if (rootNodeIndex == AABBNode.NULL_NODE)
+            {
+                rootNodeIndex = leafNodeIndex;
+                return;
+            }
+
+            // search for the best place to put the new leaf in the tree
+            // we use surface area and depth as search heuristics
+            int treeNodeIndex = rootNodeIndex;
+            AABBNode* leafNode = nodes.ReadPointerAt(leafNodeIndex);
+            while (!nodes.ReadPointerAt(treeNodeIndex)->IsLeaf())
+            {
+                // because of the test in the while loop above we know we are never a leaf inside it
+                AABBNode* treeNode = nodes.ReadPointerAt(treeNodeIndex);
+                int leftNodeIndex = treeNode->LeftNodeIndex;
+                int rightNodeIndex = treeNode->RightNodeIndex;
+                AABBNode* leftNode = nodes.ReadPointerAt(leftNodeIndex);
+                AABBNode* rightNode = nodes.ReadPointerAt(rightNodeIndex);
+
+                AABB combinedAabb = treeNode->AssociatedAABB.Merge(leafNode->AssociatedAABB);
+
+                float newParentNodeCost = 2.0f * combinedAabb.SurfaceArea;
+                float minimumPushDownCost = 2.0f * ( combinedAabb.SurfaceArea - treeNode->AssociatedAABB.SurfaceArea );
+
+                // use the costs to figure out whether to create a new parent here or descend
+                float costLeft;
+                float costRight;
+                if (leftNode->IsLeaf())
+                {
+                    costLeft = leafNode->AssociatedAABB.Merge(leftNode->AssociatedAABB).SurfaceArea + minimumPushDownCost;
+                }
+                else
+                {
+                    AABB newLeftAabb = leafNode->AssociatedAABB.Merge(leftNode->AssociatedAABB);
+                    costLeft = ( newLeftAabb.SurfaceArea - leftNode->AssociatedAABB.SurfaceArea ) + minimumPushDownCost;
+                }
+                if (rightNode->IsLeaf())
+                {
+                    costRight = leafNode->AssociatedAABB.Merge(rightNode->AssociatedAABB).SurfaceArea + minimumPushDownCost;
+                }
+                else
+                {
+                    AABB newRightAabb = leafNode->AssociatedAABB.Merge(rightNode->AssociatedAABB);
+                    costRight = ( newRightAabb.SurfaceArea - rightNode->AssociatedAABB.SurfaceArea ) + minimumPushDownCost;
+                }
+
+                // if the cost of creating a new parent node here is less than descending in either direction then
+                // we know we need to create a new parent node, errrr, here and attach the leaf to that
+                if (newParentNodeCost < costLeft && newParentNodeCost < costRight)
+                {
+                    break;
+                }
+
+                // otherwise descend in the cheapest direction
+                if (costLeft < costRight)
+                {
+                    treeNodeIndex = leftNodeIndex;
+                }
+                else
+                {
+                    treeNodeIndex = rightNodeIndex;
+                }
+            }
+
+            // the leafs sibling is going to be the node we found above and we are going to create a new
+            // parent node and attach the leaf and this item
+            int leafSiblingIndex = treeNodeIndex;
+            AABBNode* leafSibling = nodes.ReadPointerAt(leafSiblingIndex);
+            int oldParentIndex = leafSibling->ParentNodeIndex;
+            int newParentIndex = allocateNode();
+            AABBNode* newParent = nodes.ReadPointerAt(newParentIndex);
+            newParent->ParentNodeIndex = oldParentIndex;
+            newParent->AssociatedAABB = leafNode->AssociatedAABB.Merge(leafSibling->AssociatedAABB); // the new parents aabb is the leaf aabb combined with it's siblings aabb
+            newParent->LeftNodeIndex = leafSiblingIndex;
+            newParent->RightNodeIndex = leafNodeIndex;
+            leafNode->ParentNodeIndex = newParentIndex;
+            leafSibling->ParentNodeIndex = newParentIndex;
+
+            if (oldParentIndex == AABBNode.NULL_NODE)
+            {
+                // the old parent was the root and so this is now the root
+                rootNodeIndex = newParentIndex;
+            }
+            else
+            {
+                // the old parent was not the root and so we need to patch the left or right index to
+                // point to the new node
+                AABBNode* oldParent = nodes.ReadPointerAt(oldParentIndex);
+                if (oldParent->LeftNodeIndex == leafSiblingIndex)
+                {
+                    oldParent->LeftNodeIndex = newParentIndex;
+                }
+                else
+                {
+                    oldParent->RightNodeIndex = newParentIndex;
+                }
+            }
+
+            // finally we need to walk back up the tree fixing heights and areas
+            treeNodeIndex = leafNode->ParentNodeIndex;
+            fixUpwardsTree(treeNodeIndex);
+        }
+
+
+        private void removeLeaf(int leafNodeIndex)
+        {
+            // if the leaf is the root then we can just clear the root pointer and return
+            if (leafNodeIndex == rootNodeIndex)
+            {
+                rootNodeIndex = AABBNode.NULL_NODE;
+                return;
+            }
+
+            AABBNode* leafNode = nodes.ReadPointerAt(leafNodeIndex);
+            int parentNodeIndex = leafNode->ParentNodeIndex;
+            AABBNode* parentNode = nodes.ReadPointerAt(parentNodeIndex);
+            int grandParentNodeIndex = parentNode->ParentNodeIndex;
+            int siblingNodeIndex = parentNode->LeftNodeIndex == leafNodeIndex ? parentNode->RightNodeIndex : parentNode->LeftNodeIndex;
+            //assert(siblingNodeIndex != AABB_NULL_NODE); // we must have a sibling
+            AABBNode* siblingNode = nodes.ReadPointerAt(siblingNodeIndex);
+
+            if (grandParentNodeIndex != AABBNode.NULL_NODE)
+            {
+                // if we have a grand parent (i.e. the parent is not the root) then destroy the parent and connect the sibling to the grandparent in its
+                // place
+                AABBNode* grandParentNode = nodes.ReadPointerAt(grandParentNodeIndex);
+                if (grandParentNode->LeftNodeIndex == parentNodeIndex)
+                {
+                    grandParentNode->LeftNodeIndex = siblingNodeIndex;
+                }
+                else
+                {
+                    grandParentNode->RightNodeIndex = siblingNodeIndex;
+                }
+                siblingNode->ParentNodeIndex = grandParentNodeIndex;
+                deallocateNode(parentNodeIndex);
+
+                fixUpwardsTree(grandParentNodeIndex);
+            }
+            else
+            {
+                // if we have no grandparent then the parent is the root and so our sibling becomes the root and has it's parent removed
+                rootNodeIndex = siblingNodeIndex;
+                siblingNode->ParentNodeIndex = AABBNode.NULL_NODE;
+                deallocateNode(parentNodeIndex);
+            }
+
+            leafNode->ParentNodeIndex = AABBNode.NULL_NODE;
+        }
+
+        private void updateLeaf(int leafNodeIndex, AABB newAaab)
+        {
+            AABBNode* node = nodes.ReadPointerAt(leafNodeIndex);
+
+            // if the node contains the new aabb then we just leave things
+            // TODO: when we add velocity this check should kick in as often an update will lie within the velocity fattened initial aabb
+            // to support this we might need to differentiate between velocity fattened aabb and actual aabb
+            if (node->AssociatedAABB.Contains(newAaab))
+            { return; }
+
+            removeLeaf(leafNodeIndex);
+            node->AssociatedAABB = newAaab;
+            insertLeaf(leafNodeIndex);
+        }
+
+
+
+        private void fixUpwardsTree(int treeNodeIndex)
+        {
+            while (treeNodeIndex != AABBNode.NULL_NODE)
+            {
+                AABBNode* treeNode = nodes.ReadPointerAt(treeNodeIndex);
+
+                AABBNode* leftNode = nodes.ReadPointerAt(treeNode->LeftNodeIndex);
+                AABBNode* rightNode = nodes.ReadPointerAt(treeNode->RightNodeIndex);
+                treeNode->AssociatedAABB = leftNode->AssociatedAABB.Merge(rightNode->AssociatedAABB);
+
+                treeNodeIndex = treeNode->ParentNodeIndex;
+            }
+        }
+
+        public void InsertObject(CObject* cObject)
+        {
+            int nodeIndex = allocateNode();
+            AABBNode* node = nodes.ReadPointerAt(nodeIndex);
+
+            node->AssociatedAABB = cObject->GetDataPointer<Transform>()->BoundingBox;
+            node->ObjectPointer = cObject;
+
+            insertLeaf(nodeIndex);
+            map[cObject->ID] = nodeIndex;
+        }
+        public void RemoveObject(CObject* cObject)
+        {
+            int nodeIndex = map[cObject->ID];
+            removeLeaf(nodeIndex);
+            deallocateNode(nodeIndex);
+            map.Remove(cObject->ID);
+        }
+
+        public void UpdateObject(CObject* cObject)
+        {
+            int nodeIndex = map[cObject->ID];
+            updateLeaf(nodeIndex, cObject->GetDataPointer<Transform>()->BoundingBox);
+        }
+
+        public List<CObject> QueryOverlaps(CObject* cObject)
+        {
+            List<CObject> overlaps = new List<CObject>();
+            Stack<int> stack = new Stack<int>();
+            AABB testAabb = cObject->GetDataPointer<Transform>()->BoundingBox;
+            stack.Push(rootNodeIndex);
+            while (stack.Count != 0)
+            {
+                int nodeIndex = stack.Pop();
+
+                if (nodeIndex == AABBNode.NULL_NODE)
+                    continue;
+
+                AABBNode* node = nodes.ReadPointerAt(nodeIndex);
+
+                if (node->AssociatedAABB.Overlaps(testAabb))
+                {
+                    if (node->IsLeaf() && !node->ObjectPointer->Equals(*cObject))
+                    {
+                        overlaps.Add(*node->ObjectPointer);
+                    }
+                    else
+                    {
+                        stack.Push(node->LeftNodeIndex);
+                        stack.Push(node->RightNodeIndex);
+                    }
+                }
+            }
+            return overlaps;
+        }
+
+        public void Dispose()
+        {
+            map.Dispose();
+            nodes.Dispose();
+        }
+    }
 }

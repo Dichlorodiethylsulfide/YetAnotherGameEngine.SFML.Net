@@ -14,6 +14,9 @@ namespace SFML.Window
     [StructLayout(LayoutKind.Sequential)]
     public struct VideoMode
     {
+        public VideoMode(Vector2u dimensions) : this(dimensions.X, dimensions.Y)
+        {
+        }
         ////////////////////////////////////////////////////////////
         /// <summary>
         /// Construct the video mode with its width and height
