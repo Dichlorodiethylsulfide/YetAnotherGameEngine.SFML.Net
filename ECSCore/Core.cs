@@ -39,7 +39,7 @@ namespace ECS
 
         internal int Index;
         internal IntPtr MetaPtr;
-        internal unsafe int HasDataOf<T>() where T : unmanaged => this.HasDataOf(typeof(T).GetHashCode());
+        public int HasDataOf<T>() where T : unmanaged => this.HasDataOf(typeof(T).GetHashCode());
         internal unsafe int HasDataOf(int type) // use 'out' for multiple type checks?
         {
             if(MetaPtr != IntPtr.Zero)
@@ -143,7 +143,7 @@ namespace ECS
     }
     public static unsafe class UnmanagedCSharp
     {
-        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, so should be 2
+        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, should be 3
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
         internal static LookupTable* TablePtr => (LookupTable*)Table;
@@ -395,7 +395,30 @@ namespace ECS
                     Entries--;
                 }
             }
+            public void IterateTable<T>(RefWithObject<T, CObject> action, bool multi_threaded = false) where T : unmanaged
+            {
+                var type = typeof(T).GetHashCode();
+                var table = GetDataTableOf(type);
+                var counter = 0;
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (cObject->HasDataOf(type) is int _int && _int != -1)
+                        {
+                            ( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->UseInternalData(action);
+                            counter++;
+                        }
+                        else if (counter >= table->Entries)//(i > this.Entries)
+                        {
+                            // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                            return;
+                        }
+                    }
+                }
 
+            }
             public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
                 var type = typeof(T).GetHashCode();
@@ -563,35 +586,22 @@ namespace ECS
         {
             private IntPtr table;
 
-
             public void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
-                /*var type = typeof(T).GetHashCode();
-                if (typeof(T).GetHashCode() != type)
-                {
-                    throw new ArgumentException("Data type mismatch.");
-                }*/
+                ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
+            }
+            public void IterateWithObject<T>(RefWithObject<T, CObject> action, bool multi_threaded = false) where T : unmanaged
+            {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
             public void Iterate<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
             {
-                /*var type = typeof(T).GetHashCode();
-                if (typeof(T).GetHashCode() != type)
-                {
-                    throw new ArgumentException("Data type mismatch.");
-                }*/
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
             public void Iterate<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
             {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
-            /*
-            public void CollisionIteration(Compare<Transform> comparer)
-            {
-                ( (ObjectTable*)table )->CollisionCheck(comparer);
-            }
-            */
             public List<Collision> CollisionQuery()
             {
                 return ( (ObjectTable*)table )->CollisionQuery();
@@ -668,7 +678,8 @@ namespace ECS
         }
         */
         public delegate void Ref<T0>(ref T0 data0);
-        public delegate void RefWithIteration<T0>(ref T0 data0, int current_iteration, int max_iteration);
+        public delegate void RefWithObject<T0, O0>(ref T0 data0, ref O0 object0);
+        //public delegate void RefWithIteration<T0>(ref T0 data0, int current_iteration, int max_iteration);
         public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
         public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
@@ -1020,8 +1031,9 @@ namespace ECS
             }
             public T* ExposeData<T>() where T : unmanaged => (T*)this.DataPtr;
             public void UseInternalData<T>(Ref<T> action) where T : unmanaged => action(ref *(T*)this.DataPtr);
-            public void UseInternalData<T>(RefWithIteration<T> action, int index, int max) where T : unmanaged => action(ref *(T*)this.DataPtr, index, max);
+            //public void UseInternalData<T>(RefWithIteration<T> action, int index, int max) where T : unmanaged => action(ref *(T*)this.DataPtr, index, max);
             public void UseInternalData<T>(In<T> action) where T : unmanaged => action(in *(T*)this.DataPtr);
+            public void UseInternalData<T>(RefWithObject<T, CObject> action) where T : unmanaged => action(ref *(T*)this.DataPtr, ref *(CObject*)ObjectPtr);
 
             public void Dispose()
             {
@@ -1318,6 +1330,11 @@ namespace ECS.Graphics
             Vertices.Vertex2.Color = color;
             Vertices.Vertex3.Color = color;
         }
+        public Texture SetModifiedTextureColor(Color color)
+        {
+            this.SetColor(color);
+            return this;
+        }
         public Vector2u GetSize => Entry->GetSize();
         public Color GetColor()
         {
@@ -1329,34 +1346,6 @@ namespace ECS.Graphics
                 throw new Exception("Multi-threaded drawing detected!");
             states.CTexture = Entry->TexturePtr;
             ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);;
-        }
-    }
-}
-namespace ECS.Window
-{
-    public class EngineWindow : RenderWindow
-    {
-        public Keyboard.Key CurrentKey { get; internal set; } = Keyboard.Key.Unknown;
-        public EngineWindow(VideoMode mode, string name) : base(mode, name)
-        {
-            SetFramerateLimit(60);
-            this.Closed += OnQuit;
-            this.KeyPressed += OnKeyPress;
-            this.KeyReleased += OnKeyRelease;
-        }
-
-        private void OnQuit(object sender, EventArgs args)
-        {
-            this.Close();
-        }
-
-        private void OnKeyPress(object sender, KeyEventArgs args)
-        {
-            CurrentKey = args.Code;
-        }
-        private void OnKeyRelease(object sender, KeyEventArgs args)
-        {
-            CurrentKey = Keyboard.Key.Unknown; // change
         }
     }
 }

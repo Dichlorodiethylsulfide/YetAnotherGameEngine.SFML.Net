@@ -2,7 +2,6 @@
 
 using ECS; // Main namespace
 using ECS.Graphics; // Includes textures and transforms
-using ECS.Window; // Includes engine window / input events
 using ECS.Maths; // Includes maths equations and constants
 using ECS.Physics; // Includes physics bodies
 
@@ -23,20 +22,76 @@ namespace ECS.Library
 {
     using static UnmanagedCSharp;
     using static Keyboard;
+    public static class Input
+    {
+        private static readonly Current CurrentInput = new Current();
+        internal static bool GetInputBool<Args>(this Args args, Func<Args, bool> predicate) where Args : EventArgs => args != null && predicate(args);
+        internal static void SetMouseButtonPressedArgs(MouseButtonEventArgs e) => CurrentInput.MouseButtonPressed = e;
+        internal static void SetKeyPressedArgs(KeyEventArgs e) => CurrentInput.KeyPressed = e;
+        internal static void ClearArgs()
+        {
+            CurrentInput.MouseButtonPressed = null;
+            CurrentInput.KeyPressed = null;
+        }
+        public static bool GetMouseButtonPressed(Mouse.Button mouseButton) => CurrentInput.MouseButtonPressed.GetInputBool((x) => x.Button == mouseButton);
+        public static bool GetKeyPressed(Key key) => CurrentInput.KeyPressed.GetInputBool((x) => x.Code == key);
+        public static Vector2f GetMousePosition() => (Vector2f)Mouse.GetPosition(Engine.MainWindow);
+        private class Current
+        {
+            public JoystickButtonEventArgs JoystickButtonPressed = null;
+            public TouchEventArgs TouchMoved = null;
+            public TouchEventArgs TouchBegan = null;
+            public JoystickConnectEventArgs JoystickDisconnected = null;
+            public SizeEventArgs Resized = null;
+            public JoystickConnectEventArgs JoystickConnected = null;
+            public JoystickButtonEventArgs JoystickButtonReleased = null;
+            public TextEventArgs TextEntered = null;
+            public KeyEventArgs KeyReleased = null;
+            public MouseWheelScrollEventArgs MouseWheelScrolled = null;
+            public MouseButtonEventArgs MouseButtonPressed = null;
+            public JoystickMoveEventArgs JoystickMoved = null;
+            public MouseMoveEventArgs MouseMoved = null;
+            public KeyEventArgs KeyPressed = null;
+            public MouseButtonEventArgs MouseButtonReleased = null;
+            public SensorEventArgs SensorChanged = null;
+            public TouchEventArgs TouchEnded = null;
+        }
+    }
     public static class Time
     {
         public static float DeltaTime { get; internal set; } = 0f;
     }
     public abstract class Engine
     {
+        public class EngineWindow : RenderWindow
+        {
+            public EngineWindow(VideoMode mode, string name) : base(mode, name)
+            {
+                SetFramerateLimit(60);
+                this.Closed += OnQuit;
+                this.KeyPressed += OnKeyPress;
+            }
+
+            private void OnQuit(object sender, EventArgs args)
+            {
+                this.Close();
+            }
+
+            private void OnKeyPress(object sender, KeyEventArgs args)
+            {
+                Input.SetKeyPressedArgs(args);
+            }
+        }
 
         internal static Engine MainEngine = null;
         internal static EngineWindow MainWindow => MainEngine?.ThisWindow;
 
 
         internal EngineWindow ThisWindow = null;
+
+        public static readonly Random Random = new Random();
         public abstract void Initialise();
-        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false);
+        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false, false);
         private void GameLoop() // might make "public virtual"
         {
             for (int i = 0; i < Collection.Subsystems.Count; i++)
@@ -50,6 +105,7 @@ namespace ECS.Library
                     Console.WriteLine(subsystem.Name + ": " + ( now - time ).TotalMilliseconds);
                 }
             }
+            Input.ClearArgs();
         }
         public static void Start(Type engineType)
         {
@@ -58,22 +114,22 @@ namespace ECS.Library
                 MainEngine = (Engine)Activator.CreateInstance(engineType);
                 MainEngine.ThisWindow = new EngineWindow(new VideoMode(MainEngine.Settings.WindowDimensions), MainEngine.Settings.WindowName);
                 Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
-                Collection.AddNewSubsystem(typeof(RenderSubsystem));
+                Collection.AddNewSubsystem<RenderSubsystem>();
                 AddNewDataType<Texture>();
                 AddNewDataType<Transform>();
                 if (MainEngine.Settings.EnablePhysics)
                 {
                     AddNewDataType<PhysicsBody>();
-                    Collection.AddNewSubsystem(typeof(PhysicsSubsystem));
+                    Collection.AddNewSubsystem<PhysicsSubsystem>();
                 }
-                if(MainEngine.Settings.EnableCollisions)
-                {
+                if (MainEngine.Settings.EnableCollisions)
                     AddNewDataType<Collider>();
-                    Collection.AddNewSubsystem(typeof(CollisionSubsystem));
-                }
-                // Other
-                Collection.AddNewSubsystem(typeof(ColourGradientSubsystem));
+                if (MainEngine.Settings.EnableBoundary)
+                    Collection.AddNewSubsystem<BoundarySubsystem>();
                 MainEngine.Initialise();
+                if (MainEngine.Settings.EnableCollisions)
+                    if (!Collection.Subsystems.Any(x => x.GetType().IsSubclassOf(typeof(CollisionSubsystem))))
+                        throw new Exception("Please provide implementation of collision subsystem.");
                 while (MainWindow.IsOpen)
                 {
                     MainWindow.DispatchEvents();
@@ -96,7 +152,8 @@ namespace ECS.Library
         public string WindowName;
         public bool EnablePhysics;
         public bool EnableCollisions;
-        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, Vector2u window_dimensions, string name, bool enable_physics, bool enable_collisions)
+        public bool EnableBoundary;
+        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, Vector2u window_dimensions, string name, bool enable_physics, bool enable_collisions, bool enable_boundary)
         {
             MainTableSize = mSize;
             ObjectTableSize = otSize;
@@ -106,14 +163,16 @@ namespace ECS.Library
             WindowName = name;
             EnablePhysics = enable_physics;
             EnableCollisions = enable_collisions;
+            EnableBoundary = enable_boundary;
         }
     }
     public static class Collection
     {
         internal static readonly List<Subsystem> Subsystems = new List<Subsystem>();
-        internal static void AddNewSubsystem(Type type)
+        internal static void AddNewSubsystem<System>() where System : Subsystem
         {
-            if (type.IsSubclassOf(typeof(Subsystem)) && !Subsystems.Any(x => x.GetType() == type))
+            var type = typeof(System);
+            if (!type.IsAbstract && !Subsystems.Any(x => x.GetType() == type))
             {
                 Subsystems.Add((Subsystem)Activator.CreateInstance(type));
             }
@@ -123,7 +182,7 @@ namespace ECS.Library
     {
         public static RefObjectTable Entities => UnmanagedCSharp.Entities;
         public static void AddNewDataType<T>() where T : unmanaged => UnmanagedCSharp.AddNewDataType<T>();
-        public static void AddNewSubsystem(Type type) => Collection.AddNewSubsystem(type);
+        public static void AddNewSubsystem<System>() where System : Subsystem => Collection.AddNewSubsystem<System>();
 
         public Subsystem()
         {
@@ -141,6 +200,29 @@ namespace ECS.Library
             {
                 var states = new RenderStates(transform.SFMLTransform);
                 texture.Draw(Engine.MainWindow, states);
+            });
+        }
+    }
+    public sealed class BoundarySubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref Transform transform) =>
+            {
+                var window = Engine.MainEngine.Settings.WindowDimensions;
+                var current_x = transform.Position.X;
+                var current_y = transform.Position.Y;
+                if (current_x < 0)
+                    current_x = 0;
+                else if (current_x > window.X)
+                    current_x = window.X;
+
+                if (current_y < 0)
+                    current_y = 0;
+                else if (current_y > window.Y)
+                    current_y = window.Y;
+
+                transform.Position = new Vector2f(current_x, current_y);
             });
         }
     }
@@ -171,13 +253,9 @@ namespace ECS.Library
         }
     }
 
-    public class CollisionSubsystem : Subsystem
+    public abstract class CollisionSubsystem : Subsystem
     {
-        public override void Update(float deltaSeconds)
-        {
-            List<Collision> collisions = Entities.CollisionQuery();
-            Console.WriteLine(collisions.Count);
-        }
+        public List<Collision> GetCollisionsThisFrame => Entities.CollisionQuery();
     }
 
     #region Other Subsystems
