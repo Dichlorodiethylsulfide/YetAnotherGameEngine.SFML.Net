@@ -583,6 +583,12 @@ namespace SFML.Graphics
             }
         }
 
+        public unsafe void Draw(Vertex* start_vertex, uint count, PrimitiveType type, RenderStates states)
+        {
+            RenderStates.MarshalData marshaledStates = states.Marshal();
+            sfRenderWindow_drawPrimitives(CPointer, start_vertex, count, type, ref marshaledStates);
+        }
+
         public void Draw(Vertex4 vertices, PrimitiveType type, RenderStates states)
         {
             RenderStates.MarshalData marshaledStates = states.Marshal();

@@ -12,94 +12,257 @@ using SFML.Window;
 using SFML.Graphics;
 using SFML.System;
 
+using ECS.Collections;
 using ECS.Collision;
 using ECS.Graphics;
 using ECS.Physics;
+using ECS.Strings;
+using ECS.UI;
+using ECS.Delegates;
+using ECS.GarbageCollection;
 
-namespace ECS 
+namespace ECS
 {
     using static CAllocation;
     using static Debug;
     using static UnmanagedCSharp;
+    using static Maths.Maths;
+    public static class CTime
+    {
+        private struct FrameTimeDelay
+        {
+            public float DeltaTime0;
+            public float DeltaTime1;
+        }
+        private static FrameTimeDelay FrameTime = new FrameTimeDelay();
+        public static float DeltaTime
+        {
+            get
+            {
+                return FrameTime.DeltaTime1;
+            }
+            set
+            {
+                FrameTime.DeltaTime1 = FrameTime.DeltaTime0;
+                FrameTime.DeltaTime0 = value;
+            }
+        }
+    }
     public interface IComponentData { }
     public static class Debug
     {
-        /*
-        public static void AssertValidArgumentIndex(int index, int maxSize)
+        public static void Log<T>(T loggable) => Console.WriteLine(loggable.ToString());
+    }
+    public unsafe struct ByRef<T> where T : unmanaged
+    {
+        public static readonly ByRef<T> Null = new ByRef<T>();
+
+        private T* ptr;
+        internal ByRef(CObject* cObject)
         {
-            if (index < 0 || index >= maxSize)
-                throw new ArgumentException();
+            if (!typeof(IComponentData).IsAssignableFrom(typeof(T)))
+                throw new Exception("Incompatible type.");
+            ptr = cObject->GetDataPointer<T>();
+        }
+        /*
+        private bool CheckValidity() => objectPtr != null && !objectPtr->IsNull() && ptr != null;
+        public T VolatileRead()
+        {
+            if(CheckValidity())
+                return *ptr;
+            return default;
+        }
+        public void VolatileWrite(Ref<T> action)
+        {
+            if(CheckValidity())
+                action(ref *ptr);
         }
         */
+        public T VolatileRead() => *ptr;
+        public void VolatileWrite(Ref<T> action) => action(ref *ptr);
     }
-    public struct CObject : IEquatable<CObject>, IDisposable
+    /*
+    internal struct SafePtr
     {
-        private static int incrementer = 1;
-        public static readonly CObject Null = new CObject();
+        public int hashCode;
+        private IntPtr internalPtr;
 
-        internal int Index;
-        internal IntPtr MetaPtr;
-        public int HasDataOf<T>() where T : unmanaged => this.HasDataOf(typeof(T).GetHashCode());
-        internal unsafe int HasDataOf(int type) // use 'out' for multiple type checks?
+        public unsafe static explicit operator CObject*(SafePtr ptr)
         {
-            if(MetaPtr != IntPtr.Zero)
-                return ( (MetaCObject*)MetaPtr )->HasDataOf(type);
-            return -1;
+            if(((CObject*)ptr.internalPtr)->GetHashCode() == ptr.hashCode)
+                return (CObject*)ptr.internalPtr;
+            return null;
         }
-        public int ID { get; private set; }
-        public void AddData<T>(T data) where T : unmanaged
+        public unsafe SafePtr(CObject* ptr)
         {
-            if(HasDataOf<T>() == -1)
+            internalPtr = (IntPtr)ptr;
+            hashCode = ptr->GetHashCode();
+        }
+    }
+    public unsafe struct ObjectIterator<T> where T : unmanaged
+    {
+        private int currentIndex;
+        private int size;
+        private IntPtr Items;
+
+        internal ObjectIterator(int maxSize)
+        {
+            size = maxSize;
+            currentIndex = 0;
+            Items = Malloc(sizeof(SafePtr) * maxSize);
+            MemSet(Items, 0, sizeof(SafePtr) * maxSize);
+        }
+        internal void Add(CObject* ptr)
+        {
+            fixed(IntPtr* p = &Items)
             {
-                AddObjectData(this, data);
+                *(((SafePtr*)*p) + currentIndex++) = new SafePtr(ptr);
             }
         }
-        public T GetData<T>() where T : unmanaged
+        public void Reset()
         {
-            if(HasDataOf<T>() is int _int && _int != -1)
+            currentIndex = -1;
+        }
+        public void Do(Ref<T> action)
+        {
+            fixed(IntPtr* p = &Items)
             {
-                unsafe
+                while (++currentIndex < size)
                 {
-                    return ( (MetaCObject*)MetaPtr )->GetRef(_int)->GetInternalData<T>();
+                    ( (CObject*)*( ( (SafePtr*)*p ) + currentIndex) )->WriteData(action);
                 }
             }
-            throw new NullReferenceException();
+            Reset();
+        }
+    }
+    public ObjectIterator<T> GetAll<T>() where T : unmanaged
+    {
+        var index = GetDataTableIndexFromLookup<T>();
+        var table = GetDataTable(index);
+        var counter = 0;
+        var iterator = new ObjectIterator<T>(table->Entries);
+        fixed(CObject * object_ptr = &this.Value0)
+        {
+            for (int i = 0; i < this.MaxSize; i++)
+            {
+                var cObject = object_ptr + i;
+                if (cObject->HasDataOf(index))
+                {
+                    iterator.Add(cObject);
+                    counter++;
+                }
+                else if (counter >= table->Entries)//(i > this.Entries)
+                {
+                    // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                    break;
+                }
+            }
+        }
+        //iterator.Resize();
+        iterator.Reset();
+        return iterator;
+    }
+    */
+    public struct CObject : IEquatable<CObject>, IDisposable
+    {
+        private static long incrementer = 1;
+        public static readonly CObject Null = new CObject();
+
+        internal long Index;
+
+        internal IntPtr MetaPtr;
+        internal unsafe MetaSlot* Slot => (MetaSlot*)MetaPtr;
+        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(GetDataTableIndexFromLookup<T>());
+        internal unsafe bool HasDataOf(int index) => !IsDefaultNull() && MetaPtr != IntPtr.Zero && Slot->HasDataOf(index);
+        internal unsafe bool HasDataOfAll(params int[] indexes) => !IsDefaultNull() && MetaPtr != IntPtr.Zero && Slot->HasDataOfAll(indexes);
+        public long ID { get; private set; }
+        public void AddData<T>(T data) where T : unmanaged
+        {
+            if (!HasDataOf<T>())
+                AddObjectData(this, data);
         }
         internal unsafe T* GetDataPointer<T>() where T : unmanaged
         {
-            if (HasDataOf<T>() is int _int && _int != -1)
+            var index = GetDataTableIndexFromLookup<T>();
+            if (HasDataOf(index))
             {
                 unsafe
                 {
-                    return ( (MetaCObject*)MetaPtr )->GetRef(_int)->ExposeData<T>();
+                    return Slot->Get(index)->ExposeData<T>();
                 }
             }
             throw new NullReferenceException();
         }
-        public bool IsNull() => this.ID == 0;
-        public override int GetHashCode() => this.ID;
+        public T GetData<T>() where T : unmanaged
+        {
+            var index = GetDataTableIndexFromLookup<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    return Slot->Get(index)->GetInternalData<T>();
+                }
+            }
+            return default;
+            //throw new NullReferenceException();
+        }
+        public void WriteData<T>(Ref<T> action) where T : unmanaged
+        {
+            var index = GetDataTableIndexFromLookup<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    Slot->Get(index)->UseInternalData(action);
+                    return;
+                }
+            }
+            //throw new NullReferenceException();
+        }
+        public void OverwriteData<T>(T data) where T : unmanaged
+        {
+            var index = GetDataTableIndexFromLookup<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    *Slot->Get(index)->ExposeData<T>() = data;
+                    return;
+                }
+            }
+            //throw new NullReferenceException();
+        }
+        public unsafe bool IsActiveNull() => IsDefaultNull() || MetaPtr == IntPtr.Zero || Slot->MaxSize == 0;
+        public bool IsDefaultNull() => this.ID <= 0;
+        public override int GetHashCode() => (int)this.ID;
         public bool Equals(CObject other) => this.ID == other.ID;
         public void Dispose()
         {
             Destroy(this);
         }
+        
         internal void InternalDispose()
         {
             unsafe
             {
-                ( (MetaCObject*)MetaPtr )->Dispose();
+                Slot->Dispose();
             }
             Free(MetaPtr);
+            MetaPtr = IntPtr.Zero;
+            ID = 0;
+            Index = -1;
+        }
+        public static void Destroy(ref CObject obj)
+        {
+            Destroy(obj);
+            obj = Null;
         }
         public static void Destroy(CObject obj)
         {
             unsafe
             {
-                ObjectTablePtr->RemoveObjectAtIndex(obj.Index);
+                ObjectTablePtr->RemoveObjectAtIndex((int)obj.Index);
             }
-            obj.MetaPtr = IntPtr.Zero;
-            obj.Index = -1;
-            obj.ID = 0;
         }
         public static void Destroy(int index) // memset block will return 0 for index and delete the object at the 0th position, not good
         {
@@ -108,19 +271,18 @@ namespace ECS
                 Destroy(ObjectTablePtr->GetObjectAtIndex(index));
             }
         }
-
-        public static implicit operator bool(CObject obj) => !obj.IsNull();
-        internal static CObject New(int index)
+        internal static CObject New(long index)
         {
             var obj = new CObject
             {
-                ID = incrementer++,
-                Index = index,
-                MetaPtr = MetaCObject.New(),
+                ID = index,
+                Index = index - 1,
+                MetaPtr = MetaSlot.New()
+                //MetaPtr = MetaCObject.New(),
             };
             return obj;
         }
-        public static CObject New() => AddNewObject();
+        public static CObject New() => AddNewObject(incrementer++);
     }
     internal static class CAllocation
     {
@@ -136,36 +298,36 @@ namespace ECS
         public static extern void MemSet(IntPtr ptr, int value, int size);
         [DllImport(ECSDLL)]
         public static extern void MemMove(IntPtr destination, IntPtr source, int size);
-
-        public unsafe static int SizeOf<T>() where T : unmanaged => sizeof(T);
-
-        
     }
     public static unsafe class UnmanagedCSharp
     {
-        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, should be 3
+        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, animations is 3, so should be 4
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
         internal static LookupTable* TablePtr => (LookupTable*)Table;
+        internal static int DataTableEntries => TablePtr->Entries - DataTableStartIndex;
         internal static ObjectTable* ObjectTablePtr => (ObjectTable*)*&TablePtr->Value0;
         internal static TextureTable* TextureTablePtr => (TextureTable*)*((&TablePtr->Value0) + 1);
         internal static AABBTree* Tree => (AABBTree*)*((&TablePtr->Value0) + 2);
 
-        internal static Thread ProgenitorThread = null;
+        //internal static Thread ProgenitorThread = null;
 
         private static RefObjectTable refObjects = default;
         public static RefObjectTable Entities => refObjects;
-
+        public static Dictionary<CObject, List<CObject>> PossibleCollisionsThisFrame => ObjectTable.PossibleCollisionsThisFrame;
+        public static Dictionary<CObject, List<CObject>> VerifiedCollisionsThisFrame => ObjectTable.VerifiedCollisionsThisFrame;
 
         internal static DataTable* GetDataTable(int index)
         {
-            if (index < DataTableStartIndex || index >= TablePtr->Entries) // skip object table
+            index += DataTableStartIndex;
+            if (index < DataTableStartIndex || index >= TablePtr->Entries) // check entries against datatablestartindex just in case
                 throw new NullReferenceException(nameof(index));
-            return (DataTable*)( *( &TablePtr->Value0 + index ) );
+            return (DataTable*)( *( &TablePtr->Value0 + index) );
         }
+        
         internal static DataTable* GetDataTableOf(int type)
         {
-            for(int i = DataTableStartIndex; i < TablePtr->Entries; i++)
+            for(int i = 0; i < DataTableEntries; i++)
             {
                 var table = GetDataTable(i);
                 if(table->DataType == type)
@@ -173,16 +335,40 @@ namespace ECS
             }
             throw new ArgumentException(nameof(type));
         }
-
-        public static void Entry(int mainSize = 4, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 10)
+        internal static int GetDataTableIndexOf(int type)
         {
-            ProgenitorThread = Thread.CurrentThread;
+            for (int i = 0; i < DataTableEntries; i++)
+            {
+                var table = GetDataTable(i);
+                if (table->DataType == type)
+                    return i;
+            }
+            throw new ArgumentException(nameof(type));
+        }
+        
+        internal static int GetDataTableIndexOfGeneric<T>() where T : unmanaged => GetDataTableIndexOf(typeof(T).GetHashCode());
+
+        internal static int GetDataTableIndexFromLookup<T>() where T : unmanaged => DataTableLookup[typeof(T)];
+        //internal static int GetDataTableIndexFromLookup<T>() where T : unmanaged => GetDataTableIndexOfGeneric<T>();
+
+
+        private static readonly Dictionary<Type, int> DataTableLookup = new Dictionary<Type, int>();
+
+        public static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64)
+        {
+            //ProgenitorThread = Thread.CurrentThread;
             CreateMainTable(mainSize + DataTableStartIndex);
             CreateObjectTable(objectSize);
             CreateTextureTable(textureSize);
             CreateTree(objectSize);
             refObjects = RefObjectTable.New();
             DefaultDataTableSize = defaultDataSize;
+            AddNewDataType<Texture>();
+            AddNewDataType<Transform>();
+            AddNewDataType<CString>();
+            AddNewDataType<Button>();
+            AddNewDataType<UI.Text>();
+            Tree->transformDataTableIndex = GetDataTableIndexFromLookup<Transform>();
         }
 
         public static void AddNewDataType<T>() where T : unmanaged
@@ -197,14 +383,17 @@ namespace ECS
                 throw new ArgumentException("Invalid generic type.");
             }
             var hash = type.GetHashCode();
-            for(int i = DataTableStartIndex; i < TablePtr->Entries; i++)
+            for(int i = 0; i < DataTableEntries; i++)
             {
                 if(GetDataTable(i)->DataType == hash)
                 {
                     throw new ArgumentException("Type already exists.");
                 }
             }
+            //if (DataTableLookup.TryGetValue(type, out var data))
+            //    throw new ArgumentException("Type already exists.");
             CreateDataTable<T>(DefaultDataTableSize);
+            DataTableLookup.Add(typeof(T), GetDataTableIndexOfGeneric<T>());
         }
         private static void CreateTree(int size = 1024)
         {
@@ -227,80 +416,71 @@ namespace ECS
         }
         private static void CreateObjectTable(int size = 1024)
         {
-            var bytes = ( sizeof(int) * 3 ) + ( size * sizeof(CObject) );
+            var bytes = ( sizeof(int) * 5 ) + ( size * sizeof(CObject) );
             var entry = Malloc(bytes);
             MemSet(entry, 0, bytes);
             var table = (ObjectTable*)entry;
             *table = new ObjectTable();
-            table->Entries = 0;
+            table->Count = 0;
+            table->ReadIndex = 0;
+            table->WriteIndex = 0;
             table->MaxSize = size;
             table->AllocatedBytes = bytes;
             TablePtr->SetNext(entry);
         }
         private static void AddNewObject(ObjectTable* table, CObject cObject)
         {
-            if (table->Entries >= table->MaxSize)
+            if (table->WriteIndex >= table->MaxSize || table->Count >= table->MaxSize)
             {
-                throw new Exception("Not enough space in table");
+                throw new Exception("Not enough space in table"); // change, relocate writeindex if invalid, realloc to remove dead space --- do same for all tables
             }
             table->SetNext(cObject);
         }
-        internal static CObject AddNewObject()
+        internal static CObject AddNewObject(long index)
         {
-            var obj = CObject.New(ObjectTablePtr->Entries);
+            var obj = CObject.New(index);
             AddNewObject(ObjectTablePtr, obj);
             return obj;
         }
         internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
         {
-            var type = typeof(T).GetHashCode();
-            AddNewData(GetDataTableOf(type), cObject, type, data);
+            AddNewData(GetDataTable(GetDataTableIndexFromLookup<T>()), cObject, data);
         }
-        internal static T GetObjectData<T>(CObject cObject) where T : unmanaged
+        private static void AddNewData<T>(DataTable* table, CObject cObject, T data) where T : unmanaged
         {
             var type = typeof(T).GetHashCode();
-            return GetDataTableOf(type)->GetDataAtIndex(cObject.Index).GetInternalData<T>();
-        }
-        internal static T* GetObjectDataPointer<T>(CObject cObject) where T : unmanaged
-        {
-            var type = typeof(T).GetHashCode();
-            return GetDataTableOf(type)->GetDataAtIndex(cObject.Index).ExposeData<T>();
-        }
-        private static void AddNewData<T>(DataTable* table, CObject cObject, int type, T data) where T : unmanaged
-        {
             if (table->DataType != type)
             {
                 throw new Exception("Data type mismatch.");
             }
-            if (table->Entries >= table->MaxSize)
+            if (table->WriteIndex >= table->MaxSize || table->Count >= table->MaxSize)
             {
                 throw new Exception("Not enough space in table");
             }
             var entry = new Data
             {
+                DataIndex = table->WriteIndex,
                 DataType = type,
                 IsInitialised = true,
                 DataSize = sizeof(T),
-                ObjectPtr = ObjectTablePtr->GetObjectPointerAtIndex(cObject.Index) // check this just in case, it appears to work so far
+                ObjectPtr = ObjectTablePtr->GetObjectPointerAtIndex((int)cObject.Index) // check this just in case, it appears to work so far
             };
             entry.DataPtr = Malloc(entry.DataSize);
             MemSet(entry.DataPtr, 0, entry.DataSize);
             *(T*)entry.DataPtr = data;
-
-            //if (cObject.Index != table->Entries)
-            //    Console.WriteLine("Type: " + type + " is at a different position than the object it is assigned to.\nObject at: " + cObject.Index + "\nData at: " + table->Entries);
-
             table->SetNext(entry);
-            ( (MetaCObject*)cObject.MetaPtr )->AddRef(table->GetLast());
+            cObject.Slot->Insert(GetDataTableIndexFromLookup<T>(), table->GetLast());
         }
         private static void CreateDataTable<T>(int size = 1024) where T : unmanaged
         {
-            var bytes = ( sizeof(int) * 4 ) + ( size * sizeof(Data) );
+            var bytes = ( sizeof(int) * 6 ) + ( size * sizeof(Data) );
             var entry = Malloc(bytes);
             MemSet(entry, 0, bytes);
             var table = (DataTable*)entry;
             *table = new DataTable();
-            table->Entries = 0;
+            table->Count = 0;
+            table->ReadIndex = 0;
+            table->WriteIndex = 0;
             table->MaxSize = size;
             table->AllocatedBytes = bytes;
             table->DataType = typeof(T).GetHashCode();
@@ -308,18 +488,23 @@ namespace ECS
         }
         private static void CreateTextureTable(int size = 1024)
         {
-            var bytes = ( sizeof(int) * 3 ) + ( size * sizeof(TextureEntry) );
+            var bytes = ( sizeof(int) * 5 ) + ( size * sizeof(TextureEntry) );
             var entry = Malloc(bytes);
             MemSet(entry, 0, bytes);
             var table = (TextureTable*)entry;
             *table = new TextureTable();
-            table->Entries = 0;
+            table->Count = 0;
+            table->ReadIndex = 0;
+            table->WriteIndex = 0;
             table->MaxSize = size;
             table->AllocatedBytes = bytes;
             TablePtr->SetNext(entry);
         }
         internal struct LookupTable
         {
+            /*public int ReadIndex;
+            public int WriteIndex;
+            public int Count;*/
             public int Entries;
             public int MaxSize;
             public int AllocatedBytes;
@@ -347,7 +532,9 @@ namespace ECS
         }
         internal struct ObjectTable
         {
-            public int Entries;
+            public int ReadIndex;
+            public int WriteIndex;
+            public int Count;
             public int MaxSize;
             public int AllocatedBytes;
             public CObject Value0;
@@ -379,7 +566,11 @@ namespace ECS
                     *( ptr + index ) = cObject;
                 }
             }
-            public void SetNext(CObject cObject) => SetObjectAtIndex(Entries++, cObject);
+            public void SetNext(CObject cObject)
+            {
+                SetObjectAtIndex(WriteIndex++, cObject);
+                Count++;
+            }
 
             public void RemoveObjectAtIndex(int index)
             {
@@ -392,27 +583,87 @@ namespace ECS
                         return;
                     destroyed->InternalDispose();
                     MemSet((IntPtr)destroyed, 0, sizeof(CObject));
-                    Entries--;
+                    Count--;
                 }
             }
-            public void IterateTable<T>(RefWithObject<T, CObject> action, bool multi_threaded = false) where T : unmanaged
+            public CObject Get<T>(Compare<T> comparer) where T : unmanaged
             {
-                var type = typeof(T).GetHashCode();
-                var table = GetDataTableOf(type);
-                var counter = 0;
+                var index = GetDataTableIndexFromLookup<T>();
+                var table = GetDataTable(index);
                 fixed (CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
                     {
                         var cObject = object_ptr + i;
-                        if (cObject->HasDataOf(type) is int _int && _int != -1)
+                        if (cObject->HasDataOf(index) && comparer(cObject->GetData<T>()))
                         {
-                            ( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->UseInternalData(action);
+                            return *cObject;
+                        }
+                    }
+                }
+                return CObject.Null;
+            }
+            public ByRef<T> GetRef<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
+            {
+                var index = GetDataTableIndexFromLookup<T>();
+                var table = GetDataTable(index);
+                var index2 = GetDataTableIndexFromLookup<U>();
+                var table2 = GetDataTable(index2);
+
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (cObject->HasDataOf(index) && cObject->HasDataOf(index2) && comparer(cObject->GetData<U>()))
+                        {
+                            return new ByRef<T>(cObject);
+                        }
+                    }
+                }
+                return ByRef<T>.Null;
+            }
+            public T Get<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
+            {
+                var index = GetDataTableIndexFromLookup<T>();
+                var table = GetDataTable(index);
+                var index2 = GetDataTableIndexFromLookup<U>();
+                var table2 = GetDataTable(index2);
+
+                fixed(CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if(cObject->HasDataOf(index) && cObject->HasDataOf(index2) && comparer(cObject->GetData<U>()))
+                        {
+                            return cObject->GetData<T>();
+                        }
+                    }
+                }
+                return default;
+                //throw new NullReferenceException();
+            }
+
+            public void IterateTable<T>(RefWithObject<T, CObject> action, bool multi_threaded = false) where T : unmanaged
+            {
+                var index = GetDataTableIndexFromLookup<T>();
+                var table = GetDataTable(index);
+                var counter = table->ReadIndex;
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (cObject->HasDataOf(index))
+                        {
+                            cObject->Slot->Get(index)->UseInternalData(action);
                             counter++;
                         }
-                        else if (counter >= table->Entries)//(i > this.Entries)
+                        else if (counter >= table->Count)//(i > this.Entries)
                         {
                             // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                            // Check for consecutive dead space to realloc away during GC call
                             return;
                         }
                     }
@@ -421,54 +672,100 @@ namespace ECS
             }
             public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
-                var type = typeof(T).GetHashCode();
-                var table = GetDataTableOf(type);
-                var counter = 0;
-                fixed(CObject* object_ptr = &this.Value0)
+                var index = GetDataTableIndexFromLookup<T>();
+                var table = GetDataTable(index);
+                var counter = table->ReadIndex;
+                fixed (CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
                     {
                         var cObject = object_ptr + i;
-                        if(cObject->HasDataOf(type) is int _int && _int != -1)
+                        if (cObject->HasDataOf(index))
                         {
-                            ( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->UseInternalData(action);
+                            cObject->Slot->Get(index)->UseInternalData(action);
                             counter++;
                         }
-                        else if (counter >= table->Entries)//(i > this.Entries)
+                        else if (counter >= table->Count)//(i > this.Entries)
                         {
                             // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
                             return;
                         }
                     }
                 }
-                
             }
 
             public void IterateTable<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
             {
-                var type = typeof(T).GetHashCode();
-                var type2 = typeof(U).GetHashCode();
+                var index = GetDataTableIndexFromLookup<T>();
+                var index2 = GetDataTableIndexFromLookup<U>();
 
-                var table = GetDataTableOf(type);
-                var table2 = GetDataTableOf(type2);
+                var table = GetDataTable(index);
+                var table2 = GetDataTable(index2);
 
-                var size = Math.Min(table->Entries, table2->Entries);
+                var size = Math.Min(table->Count, table2->Count);
+                var maxSize = this.MaxSize;
 
-                var counter = 0;
+                var counter = Math.Min(table->ReadIndex, table2->ReadIndex);
+
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < maxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (cObject->HasDataOf(index) && cObject->HasDataOf(index2))
+                        {
+                            action(ref *cObject->Slot->Get(index)->ExposeData<T>(),
+                                   ref *cObject->Slot->Get(index2)->ExposeData<U>());
+                            counter++;
+                        }
+                        else if (counter >= size)
+                        {
+                            // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
+                            return;
+                        }
+                    }
+                }
+            }
+
+            public void IterateTable<T, U>(RefWithObject<T, U, CObject> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
+            {
+                var index = GetDataTableIndexFromLookup<T>();
+                var index2 = GetDataTableIndexFromLookup<U>();
+
+                var table = GetDataTable(index);
+                var table2 = GetDataTable(index2);
+
+                var size = Maths.Maths.Min(table->Count, table2->Count);
+
+                var counter = Math.Min(table->ReadIndex, table2->ReadIndex);
+
                 fixed (CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
                     {
                         var cObject = object_ptr + i;
-                        if((cObject->HasDataOf(type) is int _int && _int != -1) && ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ))
+                        if (cObject->HasDataOf(index) && cObject->HasDataOf(index2))
                         {
-                            action(ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->ExposeData<T>(),
-                                   ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int2)->ExposeData<U>());
+                            /*if (!cObject->Slot->Get(index)->IsValid || !cObject->Slot->Get(index2)->IsValid)
+                            {
+                                CObject.Destroy(*cObject);
+                                continue;
+                            }
+
+                            var data = cObject->Slot->Get(index)->ExposeData<T>();
+                            var data2 = cObject->Slot->Get(index2)->ExposeData<U>();
+                            
+                            action(ref *data,
+                                   ref *data2,
+                                   ref *cObject);*/
+
+                            action(ref *cObject->Slot->Get(index)->ExposeData<T>(),
+                                   ref *cObject->Slot->Get(index2)->ExposeData<U>(),
+                                   ref *cObject);
                             counter++;
                         }
-                        else if (counter >= size)//(i > this.Entries)
+                        else if (counter >= size)
                         {
-                            // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
                             return;
                         }
                     }
@@ -477,30 +774,28 @@ namespace ECS
 
             public void IterateTable<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
             {
-                var type = typeof(T).GetHashCode();
-                var type2 = typeof(U).GetHashCode();
-                var type3 = typeof(V).GetHashCode();
+                var indexes = new int[3] { GetDataTableIndexFromLookup<T>(), GetDataTableIndexFromLookup<U>(), GetDataTableIndexFromLookup<V>() };
 
-                var table = GetDataTableOf(type);
-                var table2 = GetDataTableOf(type2);
-                var table3 = GetDataTableOf(type3);
+                var table = GetDataTable(indexes[0]);
+                var table2 = GetDataTable(indexes[1]);
+                var table3 = GetDataTable(indexes[2]);
 
-                var size = Math.Min(table->Entries, table2->Entries);
-                size = Math.Min(size, table3->Entries);
+                var size = Math.Min(table->Count, table2->Count);
+                size = Math.Min(size, table3->Count);
 
-                var counter = 0;
+                var counter = Math.Min(table->ReadIndex, table2->ReadIndex);
+                counter = Math.Min(size, table3->ReadIndex);
+
                 fixed (CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
                     {
                         var cObject = object_ptr + i;
-                        if (( cObject->HasDataOf(type) is int _int && _int != -1 ) &&
-                            ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ) &&
-                            ( cObject->HasDataOf(type3) is int _int3 && _int3 != -1 ))
+                        if (cObject->HasDataOfAll(indexes))
                         {
-                            action(ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int)->ExposeData<T>(),
-                                   ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int2)->ExposeData<U>(),
-                                   ref *( (MetaCObject*)cObject->MetaPtr )->GetRef(_int3)->ExposeData<V>());
+                            action(ref *cObject->Slot->Get(indexes[0])->ExposeData<T>(),
+                                   ref *cObject->Slot->Get(indexes[1])->ExposeData<U>(),
+                                   ref *cObject->Slot->Get(indexes[2])->ExposeData<V>());
                             counter++;
                         }
                         else if (counter >= size)//(i > this.Entries)
@@ -512,29 +807,31 @@ namespace ECS
                     
                 }
             }
-
-            public List<Collision> CollisionQuery(bool multi_threaded = false)
+            public static Dictionary<CObject, List<CObject>> VerifiedCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
+            public static Dictionary<CObject, List<CObject>> PossibleCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
+            public void PossibleCollisionQuery(bool multi_threaded = false)
             {
-                var type = typeof(Transform).GetHashCode();
-                var type2 = typeof(Collider).GetHashCode();
+                PossibleCollisionsThisFrame = new Dictionary<CObject, List<CObject>>();
 
-                var table = GetDataTableOf(type);
-                var table2 = GetDataTableOf(type2);
+                var index = GetDataTableIndexFromLookup<Transform>();
+                var index2 = GetDataTableIndexFromLookup<Collider>();
 
-                var size = Math.Min(table->Entries, table2->Entries);
+                var table = GetDataTable(index);
+                var table2 = GetDataTable(index2);
 
-                var counter = 0;
+                var size = Math.Min(table->Count, table2->Count);
 
-                List<Collision> Collisions = new List<Collision>();
+                var counter = Math.Min(table->ReadIndex, table2->ReadIndex);
+
                 fixed (CObject* object_ptr = &this.Value0)
                 {
                     for (int i = 0; i < this.MaxSize; i++)
                     {
                         var cObject = object_ptr + i;
-                        if ((cObject->HasDataOf(type) is int _int && _int != -1 ) && ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ))
+                        if (cObject->HasDataOf(index) && cObject->HasDataOf(index2))
                         {
-                            Collider* data = ( (MetaCObject*)cObject->MetaPtr )->GetRef(_int2)->ExposeData<Collider>();
-                            if(!data->IsInTree)
+                            Collider* data = cObject->Slot->Get(index2)->ExposeData<Collider>();
+                            if (!data->IsInTree)
                             {
                                 Tree->InsertObject(cObject);
                                 data->IsInTree = true;
@@ -550,16 +847,16 @@ namespace ECS
                             break;
                         }
                     }
-                    // Return collisions
-                    counter = 0;
+                    // Return collisions -- can perform this operation on multiple threads, not really any faster though
+                    counter = Math.Min(table->ReadIndex, table2->ReadIndex);
+
                     for (int i = 0; i < this.MaxSize; i++)
                     {
                         var cObject = object_ptr + i;
-                        if (( cObject->HasDataOf(type) is int _int && _int != -1 ) && ( cObject->HasDataOf(type2) is int _int2 && _int2 != -1 ))
+                        if (cObject->HasDataOf(index) && cObject->HasDataOf(index2))
                         {
                             if (Tree->QueryOverlaps(cObject) is List<CObject> list && list.Count > 0)
-                                for (int j = 0; j < list.Count; j++)
-                                    Collisions.Add(new Collision(cObject, list[j]));
+                                PossibleCollisionsThisFrame.Add(*cObject, list);
                             counter++;
                         }
                         else if (counter >= size)
@@ -567,30 +864,85 @@ namespace ECS
                             break;
                         }
                     }
+                    
                 }
-                return Collisions;
             }
-          
-        }
-        public struct Collision
-        {
-            public CObject This;
-            public CObject Other;
-            internal Collision(CObject* _this, CObject _other)
+
+            public void VerifyCollisions(bool physics_enabled, bool multi_threaded = false)
             {
-                This = *_this;
-                Other = _other;
+                if (PossibleCollisionsThisFrame.Count == 0)
+                    return;
+                VerifiedCollisionsThisFrame.Clear();
+                var delta = CTime.DeltaTime;
+                foreach (var cObject in PossibleCollisionsThisFrame.Keys)
+                {
+                    var list = PossibleCollisionsThisFrame[cObject];
+                    var transform = cObject.GetDataPointer<Transform>();
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i].IsActiveNull())
+                            continue;
+
+                        var other = list[i].GetDataPointer<Transform>();
+                        if (!list[i].IsDefaultNull() && transform->ExpensiveIntersection(other))
+                        {
+                            if(VerifiedCollisionsThisFrame.ContainsKey(cObject))
+                            {
+                                VerifiedCollisionsThisFrame[cObject].Add(list[i]);
+                            }
+                            else
+                            {
+                                VerifiedCollisionsThisFrame.Add(cObject, new List<CObject> { list[i] });
+                            }
+                        }
+
+                        if(physics_enabled)
+                        {
+                            // Get physics body and velocity
+
+                            var this_pos = transform->Position;
+                            var other_pos = other->Position;
+
+                            transform->Position -= this_pos.Direction(other_pos) * delta;
+                            other->Position -= other_pos.Direction(this_pos) * delta;
+                        }
+                    }
+                }
             }
         }
         public struct RefObjectTable
         {
             private IntPtr table;
 
+            //public ObjectIterator<T> GetAll<T>() where T : unmanaged => ( (ObjectTable*)table )->GetAll<T>();
+            public CObject Get(string name) => Get((in CString _string) => _string.Equals(name));
+            public T Get<T>(string name) where T : unmanaged => Get<T, CString>((in CString _string) => _string.Equals(name));
+            public ByRef<T> GetRef<T>(string name) where T : unmanaged => GetRef<T, CString>((in CString _string) => _string.Equals(name));
+            public CObject Get<T>(Compare<T> comparer) where T : unmanaged
+            {
+                return ( (ObjectTable*)table )->Get(comparer);
+            }
+            public T Get<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
+            {
+                return ((ObjectTable*)table)->Get<T, U>(comparer);
+            }
+            public ByRef<T> GetRef<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
+            {
+                return ( (ObjectTable*)table )->GetRef<T, U>(comparer);
+            }
+            public void With<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
+            {
+                RefDataTable.With(action, multi_threaded);
+            }
             public void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
             public void IterateWithObject<T>(RefWithObject<T, CObject> action, bool multi_threaded = false) where T : unmanaged
+            {
+                ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
+            }
+            public void IterateWithObject<T, U>(RefWithObject<T, U, CObject> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
             {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
@@ -602,10 +954,9 @@ namespace ECS
             {
                 ( (ObjectTable*)table )->IterateTable(action, multi_threaded);
             }
-            public List<Collision> CollisionQuery()
-            {
-                return ( (ObjectTable*)table )->CollisionQuery();
-            }
+            
+            public void PossibleCollisionQuery() => ( (ObjectTable*)table )->PossibleCollisionQuery();
+            public void VerifyCollisions(bool physics_enabled) => ( (ObjectTable*)table )->VerifyCollisions(physics_enabled);
             public static RefObjectTable New()
             {
                 var refTable = new RefObjectTable()
@@ -615,79 +966,28 @@ namespace ECS
                 return refTable;
             }
         }
-        /*
-        public struct RefDataTable
-        {
-            private int type;
-            private IntPtr table;
-
-            public T GetData<T>(int index) where T : unmanaged
-            {
-                var _type = typeof(T).GetHashCode();
-                if(_type != type)
-                {
-                    throw new ArgumentException("Data type mismatch.");
-                }
-                return ( (DataTable*)table )->GetDataAtIndex(index).GetInternalData<T>();
-            }
-
-            public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
-            {
-                if(typeof(T).GetHashCode() != type)
-                {
-                    throw new ArgumentException("Data type mismatch.");
-                }
-                ( (DataTable*)table )->IterateTable(action, multi_threaded);
-            }
-            public int IterateTable<T>(RefWithIteration<T> action, bool multi_threaded = false) where T : unmanaged
-            {
-                if (typeof(T).GetHashCode() != type)
-                {
-                    throw new ArgumentException("Data type mismatch.");
-                }
-                return ( (DataTable*)table )->IterateTable(action, multi_threaded);
-            }
-            public void IterateTable<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
-            {
-                if (typeof(T).GetHashCode() != type)
-                {
-                    throw new ArgumentException("Data type mismatch.");
-                }
-                ( (DataTable*)table )->IterateTable(action, multi_threaded);
-            }
-
-            private static RefDataTable New(Type type)
-            {
-                var _t = type.GetHashCode();
-                var refTable = new RefDataTable()
-                {
-                    type = _t,
-                    table = (IntPtr)GetDataTableOf(_t),
-                };
-                return refTable;
-            }
-            public static RefDataTable CreateFromUnknownType<U>()
-            {
-                var type = typeof(U);
-                if (!type.IsValueType)
-                {
-                    throw new ArgumentException("Invalid generic type.");
-                }
-                return New(type);
-            }
-        }
-        */
         public delegate void Ref<T0>(ref T0 data0);
         public delegate void RefWithObject<T0, O0>(ref T0 data0, ref O0 object0);
         //public delegate void RefWithIteration<T0>(ref T0 data0, int current_iteration, int max_iteration);
         public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
+        public delegate void RefWithObject<T0, T1, O0>(ref T0 data0, ref T1 data1, ref O0 object0);
         public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
-        public delegate int Compare<T0>(in T0 data, in T0 otherData);
+        public delegate bool Compare<T0>(in T0 data);
+
+        internal struct RefDataTable
+        {
+            public static void With<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
+            {
+                GetDataTable(GetDataTableIndexFromLookup<T>())->IterateTable(action, multi_threaded);
+            }
+        }
         internal struct DataTable
         {
             public int DataType;
-            public int Entries;
+            public int ReadIndex;
+            public int WriteIndex;
+            public int Count;
             public int MaxSize;
             public int AllocatedBytes;
             public Data Value0;
@@ -730,136 +1030,37 @@ namespace ECS
                         throw new ArgumentException();
                     ( ptr + index )->Dispose();
                     MemSet((IntPtr)( ptr + index ), 0, sizeof(Data)); // just reset it to 0 for now
-                    Entries--;
+                    Count--;
                 }
             }
 
-            public void SetNext(Data data) => SetDataAtIndex(Entries++, data);
-            public IntPtr GetLast() => GetDataPointerAtIndex(Entries - 1);
-
-            /*
-            public int IterateTable<T>(RefWithIteration<T> action, bool multi_threaded = false) where T : unmanaged
+            public void SetNext(Data data)
             {
-                fixed (Data* data_ptr = &this.Value0)
-                {
-                    if (multi_threaded)
-                    {
-                        var table = GetDataTableOf(DataType);
-                        var entries = this.Entries;
-                        var count = 0;
-                        Parallel.For(0, this.MaxSize, x =>
-                        {
-                            if (x > entries) // Same as below Debug
-                            {
-                                Interlocked.Increment(ref count);
-                                return;
-                            }
-                            var data = table->GetDataAtIndex(x);
-                            if (data.IsValid)
-                            {
-                                data.UseInternalData(action, x, entries);
-                            }
-                        });
-                        return count;
-                    }
-                    else
-                    {
-                        for (int i = 0; i < this.MaxSize; i++)
-                        {
-                            var data = data_ptr + i;
-                            if (data->IsValid)
-                            {
-                                data->UseInternalData(action, i, this.Entries);
-                            }
-                            else if (i > this.Entries)
-                            {
-                                // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
-                                return i;
-                            }
-                        }
-                    }
-                    return -1;
-                }
-
+                //SetDataAtIndex(Entries++, data);
+                SetDataAtIndex(WriteIndex++, data);
+                Count++;
             }
+
+            public IntPtr GetLast() => GetDataPointerAtIndex(WriteIndex - 1);
 
             public void IterateTable<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
-                fixed(Data* data_ptr = &this.Value0)
+                fixed (Data* data_ptr = &this.Value0)
                 {
-                    if (multi_threaded)
-                    {
-                        var table = GetDataTableOf(DataType);
-                        var entries = this.Entries;
-                        Parallel.For(0, this.MaxSize, x =>
-                        {
-                            if (x > entries) // Same as below Debug
-                                return;
-                            var data = table->GetDataAtIndex(x);
-                            if (data.IsValid)
-                            {
-                                data.UseInternalData(action);
-                            }
-                        });
-                    }
-                    else
-                    {
-                        for (int i = 0; i < this.MaxSize; i++)
-                        {
-                            var data = data_ptr + i;
-                            if (data->IsValid)
-                            {
-                                data->UseInternalData(action);
-                            }
-                            else if (i > this.Entries)
-                            {
-                                // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
-                                break;
-                            }
-                        }
-                    }
-                }
-
-            }
-
-            public void IterateTable<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
-            {
-                if(multi_threaded)
-                {
-                    var table = GetDataTableOf(DataType);
-                    var other_table = GetDataTableOf(typeof(U).GetHashCode());
-                    var entries = this.Entries;
-                    Parallel.For(0, this.MaxSize, i =>
-                    {
-                        if (i > entries)
-                            return;
-                        var data = table->GetDataAtIndex(i);
-                        var data1 = other_table->GetDataAtIndex(i);
-                        if (data.IsValid && data1.IsValid)
-                        {
-                            action(ref *(T*)data.DataPtr, ref *(U*)data1.DataPtr);
-                        }
-                    });
-                }
-                else
-                {
-                    var other_table = GetDataTableOf(typeof(U).GetHashCode());
+                    var counter = ReadIndex;
                     for (int i = 0; i < this.MaxSize; i++)
                     {
-                        var data = this.GetDataAtIndex(i);
-                        var data1 = other_table->GetDataAtIndex(i);
-                        if (data.IsValid && data1.IsValid)
+                        var data = data_ptr + i;
+                        if (data->IsValid)
                         {
-                            action(ref *(T*)data.DataPtr, ref *(U*)data1.DataPtr);
+                            data->UseInternalData(action);
+                            counter++;
                         }
-                        else if(i > this.Entries)
-                        {
-                            break;
-                        }
+                        if (counter >= this.Count)
+                            return;
                     }
                 }
             }
-            */
         }
         
         public static IntPtr TryAddTexture(string filename)
@@ -875,7 +1076,9 @@ namespace ECS
         }
         internal struct TextureTable
         {
-            public int Entries;
+            public int ReadIndex;
+            public int WriteIndex;
+            public int Count;
             public int MaxSize;
             public int AllocatedBytes;
             public TextureEntry Value0;
@@ -910,14 +1113,19 @@ namespace ECS
                 }
             }
 
-            public void SetNext(TextureEntry entry) => SetEntryAtIndex(Entries++, entry);
-            public IntPtr GetLast() => GetEntryPointerAtIndex(Entries - 1);
+            public void SetNext(TextureEntry entry)
+            {
+                //SetEntryAtIndex(Entries++, entry);
+                SetEntryAtIndex(WriteIndex++, entry);
+                Count++;
+            }
+            public IntPtr GetLast() => GetEntryPointerAtIndex(WriteIndex - 1);
             public IntPtr Find(string filename)
             {
                 var hash = filename.GetHashCode();
                 fixed(TextureEntry* ptr = &this.Value0)
                 {
-                    for(int i = 0; i < Entries; i++)
+                    for(int i = ReadIndex; i < Count; i++)
                     {
                         if((ptr + i)->HashCode == hash)
                         {
@@ -930,7 +1138,7 @@ namespace ECS
 
             public IntPtr NewTexture(string filename)
             {
-                if (Entries >= MaxSize)
+                if (Count >= MaxSize)
                 {
                     throw new Exception("Not enough space in table");
                 }
@@ -956,63 +1164,6 @@ namespace ECS
                 Free(TexturePtr);
             }
         }
-        /*
-        public struct TextureEntry
-        {
-            public String Name;
-            public IntRect TextureRect;
-            public IntPtr TexturePtr;
-
-            public Vector2u GetSize() => SFML.Graphics.Texture.sfTexture_getSize(TexturePtr);
-            public static IntPtr New(string filename)
-            {
-                if(TextureTablePtr->Entries >= TextureTablePtr->MaxSize)
-                {
-                    throw new Exception("Not enough space in table");
-                }
-                var entry = new TextureEntry()
-                {
-                    Name = String.New(filename),
-                    TextureRect = new IntRect()
-                };
-                entry.TexturePtr = Texture.sfTexture_createFromFile(filename, ref entry.TextureRect);
-                TextureTablePtr->SetNext(entry);
-                return TextureTablePtr->GetLast();
-            }
-        }
-        public struct String
-        {
-            public int Length;
-            public int HashCode;
-            public IntPtr Start;
-
-            public static String New(string text)
-            {
-                var new_string = new String()
-                {
-                    Length = text.Length,
-                    HashCode = text.GetHashCode()
-                };
-                new_string.Start = Malloc(text.Length);
-                MemSet(new_string.Start, 0, text.Length);
-                for(int i = 0; i < text.Length; i++)
-                {
-                    *( (char*)new_string.Start + i ) = text[i];
-                }
-                return new_string;
-            }
-            public override string ToString()
-            {
-                string new_string = string.Empty;
-                for (int i = 0; i < Length; i++)
-                {
-                    new_string += *( (char*)Start + i );
-                }
-                return new_string;
-            }
-
-        }
-        */
         internal struct Data : IDisposable
         {
             public static readonly Data Null = new Data();
@@ -1020,6 +1171,7 @@ namespace ECS
             public bool IsInitialised;
             public int DataType;
             public int DataSize;
+            public int DataIndex;
             public IntPtr DataPtr;
             public IntPtr ObjectPtr;
             public bool IsValid => IsInitialised && DataPtr != IntPtr.Zero && ObjectPtr != IntPtr.Zero;
@@ -1037,6 +1189,8 @@ namespace ECS
 
             public void Dispose()
             {
+                if (DataType == typeof(Collider).GetHashCode())
+                    Tree->RemoveObject((CObject*)ObjectPtr);
                 // Kill link to object --- clear object's meta data cache
                 ObjectPtr = IntPtr.Zero;
                 // Kill link to data --- clear data's data
@@ -1046,24 +1200,87 @@ namespace ECS
 
             public static void Destroy(Data data)
             {
-                GetDataTableOf(data.DataType)->RemoveDataAtIndex(( (CObject*)data.ObjectPtr )->Index);
+                GetDataTableOf(data.DataType)->RemoveDataAtIndex(data.DataIndex);
             }
         }
-        internal struct MetaCObject : IDisposable
+        
+        internal struct MetaSlot : IDisposable
         {
-            public int Entries;
             public int MaxSize;
             public IntPtr DataPtr;
+            public Data* Get(int index)
+            {
+                if (index < 0 || index >= MaxSize)
+                    return null;
+                fixed (IntPtr* ptrPtr = &DataPtr)
+                {
+                    return (Data*)*( ptrPtr + index );
+                }
+            }
+            public void Insert(int index, IntPtr ptr)
+            {
+                if (index < 0 || index >= MaxSize)
+                    return;
+                fixed(IntPtr* ptrPtr = &DataPtr)
+                {
+                    *( ptrPtr + index ) = ptr;
+                }
+            }
+            public void Remove(int index)
+            {
+                if (index < 0 || index >= MaxSize)
+                    return;
+                fixed (IntPtr* ptrPtr = &DataPtr)
+                {
+                    *( ptrPtr + index ) = IntPtr.Zero;
+                }
+            }
+            public bool HasDataOf(int index)
+            {
+                if (index < 0 || index >= MaxSize)
+                    return false;
+                fixed (IntPtr* ptrPtr = &DataPtr)
+                {
+                    return *( ptrPtr + index ) != IntPtr.Zero;
+                }
+            }
+            public bool HasDataOfAll(int[] indexes)
+            {
+                fixed (IntPtr* ptrPtr = &DataPtr)
+                {
+                    for(int i = 0; i < indexes.Length; i++)
+                    {
+                        var index = indexes[i];
+                        if (index < 0 || index >= MaxSize)
+                            return false;
+                        if (*( ptrPtr + index ) == IntPtr.Zero)
+                            return false;
+                    }
+                    return true;
+                }
+            }
+            public static IntPtr New()
+            {
+                var size = TablePtr->Entries - DataTableStartIndex + 1;
+                var bytes = sizeof(int) + (sizeof(IntPtr) * size );
+                var ptr = Malloc(bytes);
+                MemSet(ptr, 0, bytes);
+                var metaSlot = new MetaSlot()
+                {
+                    MaxSize = size
+                };
+                *(MetaSlot*)ptr = metaSlot;
+                return ptr;
+            }
 
             public void Dispose()
             {
-                // Kill link to data --- clear data's data
                 fixed (IntPtr* ptr = &DataPtr)
                 {
-                    for (int i = 0; i < this.MaxSize; i++)
+                    for (int i = 0; i < this.MaxSize - 1; i++)
                     {
                         var int_ptr = *( ptr + i );
-                        if(int_ptr != IntPtr.Zero)
+                        if (int_ptr != IntPtr.Zero)
                         {
                             Data* data = (Data*)int_ptr;
                             if (data->IsValid)
@@ -1074,71 +1291,54 @@ namespace ECS
                     }
                 }
             }
-
-            public void AddRef(IntPtr dataPtr)
+        }
+    }
+}
+namespace ECS.Strings
+{
+    using static CAllocation;
+    public unsafe struct CString : IComponentData, IDisposable, IEquatable<string>
+    {
+        public readonly int Length;
+        private IntPtr StringPtr;
+        internal readonly int stringHash;
+        public CString(string name)
+        {
+            Length = name.Length;
+            StringPtr = Malloc(sizeof(char) * Length);
+            MemSet(StringPtr, 0, Length);
+            fixed (IntPtr* ptr = &StringPtr)
             {
-                if(Entries >= MaxSize)
+                var start = (char*)*ptr;
+                for (int i = 0; i < Length; i++)
                 {
-                    throw new Exception("Not enough space in meta object");
-                }
-                fixed (IntPtr* ptr = &DataPtr)
-                {
-                    *( ptr + Entries++ ) = dataPtr;
-                }
-            }
-            public Data* GetRef(int index)
-            {
-                if(index < 0 || index >= Entries)
-                    throw new ArgumentException(nameof(index));
-                fixed (IntPtr* ptr = &DataPtr)
-                {
-                    return (Data*)*(ptr + index);
-                }
-            }
-            public void RemoveRef(int index)
-            {
-                if (index < 0 || index >= Entries)
-                    throw new ArgumentException(nameof(index));
-                fixed (IntPtr* ptr = &DataPtr)
-                {
-                    Data.Destroy(*( (Data*)ptr + index ));//->Dispose();
-                    for(int i = index; i < this.MaxSize; i++)
-                    {
-                        ptr[i] = ptr[i + 1];
-                    }
-                    MemSet(*( ptr + this.MaxSize - 1 ), 0, sizeof(IntPtr));
-                    Entries--;
+                    *( start + i ) = name[i];
                 }
             }
-            public int HasDataOf(int type)
+            stringHash = name.GetHashCode();
+        }
+        public char this[int index]
+        {
+            get
             {
-                fixed (IntPtr* ptr = &DataPtr)
+                if (index < 0 || index >= Length)
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                fixed (IntPtr* ptr = &StringPtr)
                 {
-                    for (int i = 0; i < Entries; i++)
-                    {
-                        if (type == ((Data*)*(ptr + i))->DataType)
-                        {
-                            return i;
-                        }
-                    }
+                    return *( (char*)*ptr + index );
                 }
-                return -1;
             }
-
-            public static IntPtr New(int size = 8)
+        }
+        public void Dispose() => Free(StringPtr);
+        public bool Equals(string other) => stringHash == other.GetHashCode();
+        public override string ToString()
+        {
+            string new_string = "";
+            for (int i = 0; i < Length; i++)
             {
-                var bytes = ( sizeof(int) * 2 ) + ( sizeof(IntPtr) * size );
-                var ptr = Malloc(bytes);
-                MemSet(ptr, 0, bytes);
-                var metaCObject = new MetaCObject
-                {
-                    Entries = 0,
-                    MaxSize = size
-                };
-                *(MetaCObject*)ptr = metaCObject;
-                return ptr;
+                new_string += this[i];
             }
-
+            return new_string;
         }
     }
 }
@@ -1251,14 +1451,32 @@ namespace ECS.Graphics
                 return myInverseTransform;
             }
         }
-        public Transform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width)) { }
-        public Transform(Vector2f position, Vector2u size)
+        private FloatRect GetGlobalBounds()
+        {
+            return SFMLTransform.TransformRect(GetLocalBounds());
+        }
+        private FloatRect GetLocalBounds()
+        {
+            return new FloatRect(0, 0, mySize.X, mySize.Y);
+        }
+        public bool ExpensiveIntersection(Transform other)
+        {
+            return GetGlobalBounds().Intersects(other.GetGlobalBounds());
+        }
+        internal unsafe bool ExpensiveIntersection(Transform* other)
+        {
+            return GetGlobalBounds().Intersects(other->GetGlobalBounds());
+        }
+        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation) { }
+        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), 0) { }
+        public Transform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(height, width) / 2, 0) { }
+        public Transform(Vector2f position, Vector2u size, Vector2f origin, float rotation)
         {
             mySize = size;
             //myBounds = new FloatRect(new Vector2f(), (Vector2f)size);
-            myOrigin = (Vector2f)size / 2;
+            myOrigin = origin;
             myPosition = position;
-            myRotation = 0;
+            myRotation = rotation;
             myScale = new Vector2f(1, 1);
             myTransformNeedUpdate = true;
             myInverseNeedUpdate = true;
@@ -1269,7 +1487,7 @@ namespace ECS.Graphics
         //public FloatRect GetLocalBounds() => myBounds;
         //private FloatRect myBounds;
 
-        public AABB BoundingBox => new AABB(myPosition.X, myPosition.Y, myPosition.X + mySize.X, myPosition.Y + mySize.Y);
+        public AABB BoundingBox => new AABB(myPosition.X - myOrigin.X, myPosition.Y - myOrigin.Y, myPosition.X + mySize.X - myOrigin.X, myPosition.Y + mySize.Y - myOrigin.Y);
         private Vector2u mySize;
         private Vector2f myOrigin;// = new Vector2f(0, 0);
         private Vector2f myPosition;// = new Vector2f(0, 0);
@@ -1282,13 +1500,19 @@ namespace ECS.Graphics
     }
     public unsafe struct Texture : Drawable, IComponentData
     {
+        internal bool ShouldDraw;
         internal Vertex4 Vertices;
         internal IntPtr TexturePtr;
         internal TextureEntry* Entry => (TextureEntry*)TexturePtr;
+        public Texture(string filename, bool shouldDraw) : this(filename)
+        {
+            ShouldDraw = shouldDraw;
+        }
         public Texture(string filename)
         {
             TexturePtr = TryAddTexture(filename);
             Vertices = new Vertex4();
+            ShouldDraw = true;
             UpdateTexture(TexturePtr);
         }
         public void UpdateTexture(IntPtr texture)
@@ -1317,6 +1541,12 @@ namespace ECS.Graphics
             texture.RandomiseColor();
             return texture;
         }
+        public Texture CalculateShouldDraw(AABB _this, AABB other)
+        {
+            var texture = this;
+            texture.ShouldDraw = other.Overlaps(_this);
+            return texture;
+        }
         private static readonly Random rnd = new Random();
         public void RandomiseColor()
         {
@@ -1342,10 +1572,12 @@ namespace ECS.Graphics
         }
         public void Draw(RenderTarget target, RenderStates states)
         {
-            if (Thread.CurrentThread != ProgenitorThread)
-                throw new Exception("Multi-threaded drawing detected!");
+            //if (Thread.CurrentThread != ProgenitorThread)
+            //    throw new Exception("Multi-threaded drawing detected!");
+            if (!ShouldDraw)
+                return;
             states.CTexture = Entry->TexturePtr;
-            ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);;
+            ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);
         }
     }
 }
@@ -1387,8 +1619,14 @@ namespace ECS.Maths
             var length = vector.Length();
             return new Vector2f(vector.X / length, vector.Y / length);
         }
+        public static Vector2f Direction(this Vector2f this_vector, Vector2f target)
+        {
+            return (target - this_vector).Normalise();
+        }
         public static Vector2f Min(this FloatRect box) => new Vector2f(Math.Min(box.Left, box.Left + box.Width), Math.Min(box.Top, box.Top + box.Height));
         public static Vector2f Max(this FloatRect box) => new Vector2f(Math.Max(box.Left, box.Left + box.Width), Math.Max(box.Top, box.Top + box.Height));
+
+        public static float ToRotation(this Vector2f direction) => ( (float)( Math.Atan2(direction.Y, direction.X) / ( 2 * Math.PI ) ) * 360f ) + 90f; // specific to SFML as 0, 0 is top-left
 
         public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
@@ -1471,13 +1709,14 @@ namespace ECS.Collections
             }
             public void Resize(int size)
             {
-                IntPtr new_block = Malloc(sizeof(T) * size);
-                MemSet(new_block, 0, sizeof(T) * size);
-                MemMove(new_block, Items, sizeof(T) * MaxSize);
-                Free(Items);
-                Items = new_block;
+                Items = CGC.ResizeEntireBlock(Items, sizeof(T), size);
                 MaxSize = size;
                 AllocatedBytes = sizeof(T) * size;
+            }
+            public void Clear()
+            {
+                Entries = 0;
+                MemSet(Items, 0, AllocatedBytes);
             }
             public void Dispose()
             {
@@ -1614,6 +1853,11 @@ namespace ECS.Collision
             other.maxY <= maxY;
         }
 
+        public bool Contains(Vector2f point)
+        {
+            return point.X >= minX && point.X <= maxX && point.Y >= minY && point.Y <= maxY;
+        }
+
         public AABB Merge(AABB other)
         {
             return new AABB(
@@ -1661,13 +1905,14 @@ namespace ECS.Collision
     public unsafe struct AABBTree : IDisposable
     {
 
-        private LocalDictionary<int, int> map;
+        private LocalDictionary<long, int> map;
         private LocalArray<AABBNode> nodes;
         private int rootNodeIndex;
         private int allocatedNodeCount;
         private int nextFreeNodeIndex;
         private int nodeCapacity;
         private int growthSize;
+        public int transformDataTableIndex;
 
         public static AABBTree New(AABBTree* original)
         {
@@ -1688,7 +1933,7 @@ namespace ECS.Collision
             nodeCapacity = start_size;
             growthSize = start_size;
             nodes = new LocalArray<AABBNode>(start_size);
-            map = new LocalDictionary<int, int>(start_size);
+            map = new LocalDictionary<long, int>(start_size);
             for (int nodeIndex = 0; nodeIndex < start_size; nodeIndex++)
             {
                 AABBNode node = AABBNode.New();
@@ -1696,6 +1941,7 @@ namespace ECS.Collision
                 nodes.Add(node);
             }
             nodes.ReadPointerAt(start_size - 1)->NextNodeIndex = AABBNode.NULL_NODE;
+            transformDataTableIndex = -1;
         }
         private int allocateNode()
         {
@@ -1928,7 +2174,7 @@ namespace ECS.Collision
             int nodeIndex = allocateNode();
             AABBNode* node = nodes.ReadPointerAt(nodeIndex);
 
-            node->AssociatedAABB = cObject->GetDataPointer<Transform>()->BoundingBox;
+            node->AssociatedAABB = cObject->Slot->Get(transformDataTableIndex)->ExposeData<Transform>()->BoundingBox;//cObject->GetDataPointer<Transform>()->BoundingBox;
             node->ObjectPointer = cObject;
 
             insertLeaf(nodeIndex);
@@ -1945,14 +2191,14 @@ namespace ECS.Collision
         public void UpdateObject(CObject* cObject)
         {
             int nodeIndex = map[cObject->ID];
-            updateLeaf(nodeIndex, cObject->GetDataPointer<Transform>()->BoundingBox);
+            updateLeaf(nodeIndex, cObject->Slot->Get(transformDataTableIndex)->ExposeData<Transform>()->BoundingBox);
         }
 
-        public List<CObject> QueryOverlaps(CObject* cObject)
+        public List<CObject> QueryOverlaps(CObject cObject)
         {
             List<CObject> overlaps = new List<CObject>();
             Stack<int> stack = new Stack<int>();
-            AABB testAabb = cObject->GetDataPointer<Transform>()->BoundingBox;
+            AABB testAabb = cObject.Slot->Get(transformDataTableIndex)->ExposeData<Transform>()->BoundingBox;
             stack.Push(rootNodeIndex);
             while (stack.Count != 0)
             {
@@ -1965,7 +2211,7 @@ namespace ECS.Collision
 
                 if (node->AssociatedAABB.Overlaps(testAabb))
                 {
-                    if (node->IsLeaf() && !node->ObjectPointer->Equals(*cObject))
+                    if (node->IsLeaf() && !node->ObjectPointer->Equals(cObject))
                     {
                         overlaps.Add(*node->ObjectPointer);
                     }
@@ -1978,11 +2224,200 @@ namespace ECS.Collision
             }
             return overlaps;
         }
+        public List<CObject> QueryOverlaps(CObject* cObject)
+        {
+            return QueryOverlaps(*cObject);
+        }
 
         public void Dispose()
         {
             map.Dispose();
             nodes.Dispose();
         }
+    }
+}
+namespace ECS.Delegates
+{
+    public unsafe struct CDelegate
+    {
+        private static readonly Dictionary<int, Delegate> delegateMap = new Dictionary<int, Delegate>();
+
+        private int hashCode;
+        private IntPtr delegatePtr;
+        public object Invoke<T>(params object[] parameters) where T : Delegate
+        {
+            if(delegatePtr != IntPtr.Zero)
+            {
+                var dynamic = Marshal.GetDelegateForFunctionPointer(delegatePtr, typeof(T));
+                delegatePtr = Marshal.GetFunctionPointerForDelegate(delegateMap[hashCode]);
+                return dynamic.DynamicInvoke(parameters);
+            }
+            return null;
+        }
+        public static CDelegate New<T>(T action) where T : Delegate
+        {
+            int hash = action.GetHashCode();
+            if(!delegateMap.ContainsKey(hash))
+                delegateMap.Add(hash, action);
+            var @delegate = new CDelegate
+            {
+                hashCode = hash,
+                delegatePtr = Marshal.GetFunctionPointerForDelegate(action),
+            };
+            return @delegate;
+        }
+    }
+}
+namespace ECS.UI
+{
+    using static ECS.Collections.Generic;
+    using static SFML.Graphics.RenderWindow;
+    public struct Button : IComponentData
+    {
+        private CDelegate OnClick;
+        public Button(Action action)
+        {
+            OnClick = CDelegate.New(action);
+        }
+        public void Click()
+        {
+            OnClick.Invoke<Action>();
+        }
+    }
+    public struct Text : Drawable, IComponentData
+    {
+        private CString String;
+        private uint CharacterSize;
+        private Font Font;
+        private Color Color;
+        private LocalArray<Vertex> vertices;
+        private bool needsUpdate;
+        public Text(string text, Font font, uint size = 15)
+        {
+            String = new CString(text);
+            Font = font;
+            CharacterSize = size;
+            Color = Color.White;
+            needsUpdate = true;
+            vertices = new LocalArray<Vertex>(String.Length * 6);
+        }
+        public void ChangeText(string new_text)
+        {
+            if (new_text.Length == String.Length && new_text.GetHashCode() == String.stringHash)
+                return;
+            String.Dispose();
+            String = new CString(new_text);
+            vertices = new LocalArray<Vertex>(String.Length * 6);
+            needsUpdate = true;
+        }
+        private void updateText()
+        {
+            if (!needsUpdate)
+                return;
+            needsUpdate = false;
+            vertices.Clear();
+            if (String.Length == 0)
+                return;
+
+            float whiteSpaceWidth = Font.GetGlyph(' ', CharacterSize).Advance;
+            float letterSpacing = whiteSpaceWidth / 3f;
+            //whiteSpaceWidth += letterSpacing;
+            //float lineSpacing = Font.GetLineSpacing(CharacterSize);
+            float x = 0;
+            float y = CharacterSize;
+            uint previousChar = 0;
+            for (int i = 0; i < String.Length; i++)
+            {
+                uint character = String[i];
+
+                if (character == '\r')
+                    continue;
+
+                x += Font.GetKerning(previousChar, character, CharacterSize);
+
+                previousChar = character;
+
+                var glyph = Font.GetGlyph(character, CharacterSize);
+
+                float padding = 1f;
+
+                float left = glyph.Bounds.Left - padding;
+                float top = glyph.Bounds.Top - padding;
+                float right = glyph.Bounds.Left + glyph.Bounds.Width + padding;
+                float bottom = glyph.Bounds.Top + glyph.Bounds.Height + padding;
+
+                float u1 = glyph.TextureRect.Left - padding;
+                float v1 = glyph.TextureRect.Top - padding;
+                float u2 = glyph.TextureRect.Left + glyph.TextureRect.Width + padding;
+                float v2 = glyph.TextureRect.Top + glyph.TextureRect.Height + padding;
+
+                vertices.Add(new Vertex(new Vector2f(x + left, y + top), Color, new Vector2f(u1, v1)));
+                vertices.Add(new Vertex(new Vector2f(x + right, y + top), Color, new Vector2f(u2, v1)));
+                vertices.Add(new Vertex(new Vector2f(x + left, y + bottom), Color, new Vector2f(u1, v2)));
+                vertices.Add(new Vertex(new Vector2f(x + left, y + bottom), Color, new Vector2f(u1, v2)));
+                vertices.Add(new Vertex(new Vector2f(x + right, y + top), Color, new Vector2f(u2, v1)));
+                vertices.Add(new Vertex(new Vector2f(x + right, y + bottom), Color, new Vector2f(u2, v2)));
+
+                x += glyph.Advance + letterSpacing;
+            }
+
+        }
+        public void Draw(RenderTarget target, RenderStates states)
+        {
+            updateText();
+            unsafe
+            {
+                states.CTexture = Font.GetTexture(CharacterSize);
+                ( (RenderWindow)target ).Draw(vertices.ReadPointerAt(0), (uint)vertices.Entries, PrimitiveType.TriangleStrip, states);
+            }
+        }
+    }
+    
+    public struct Font
+    {
+        public IntPtr CFont;
+        public Font(string filename)
+        {
+            CFont = SFML.Graphics.Font.sfFont_createFromFile(filename);
+        }
+        public Glyph GetGlyph(uint characterCode, uint characterSize)
+        {
+            return SFML.Graphics.Font.sfFont_getGlyph(CFont, characterCode, characterSize, false, 0f);
+        }
+        public IntPtr GetTexture(uint characterSize)
+        {
+            return SFML.Graphics.Font.sfFont_getTexture(CFont, characterSize);
+        }
+        public float GetKerning(uint previousChar, uint nextChar, uint characterSize)
+        {
+            return SFML.Graphics.Font.sfFont_getKerning(CFont, previousChar, nextChar, characterSize);
+        }
+    }
+}
+namespace ECS.Animations
+{
+    public struct Animation : IComponentData
+    {
+        public uint FrameCount;
+        public IntPtr Frames;
+    }
+}
+namespace ECS.GarbageCollection
+{
+    using static CAllocation;
+    /// <summary>
+    /// C Garbage Collection
+    /// </summary>
+    public static class CGC
+    {
+        public static IntPtr ResizeEntireBlock(IntPtr block, int size_of, int new_size)
+        {
+            var new_block = Malloc(size_of * new_size);
+            MemSet(new_block, 0, size_of * new_size);
+            MemMove(new_block, block, size_of * new_size);
+            Free(block);
+            return new_block;
+        }
+        // erase large blocks of dead space in table --- later optimisation
     }
 }

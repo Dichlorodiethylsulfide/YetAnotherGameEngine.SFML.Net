@@ -224,7 +224,7 @@ namespace SFML.Graphics
 
         #region Imports
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern IntPtr sfFont_createFromFile(string Filename);
+        public static extern IntPtr sfFont_createFromFile(string Filename);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
         static extern IntPtr sfFont_createFromStream(IntPtr stream);
@@ -239,10 +239,10 @@ namespace SFML.Graphics
         static extern void sfFont_destroy(IntPtr CPointer);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern Glyph sfFont_getGlyph(IntPtr CPointer, uint codePoint, uint characterSize, bool bold, float outlineThickness);
+        public static extern Glyph sfFont_getGlyph(IntPtr CPointer, uint codePoint, uint characterSize, bool bold, float outlineThickness);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern float sfFont_getKerning(IntPtr CPointer, uint first, uint second, uint characterSize);
+        public static extern float sfFont_getKerning(IntPtr CPointer, uint first, uint second, uint characterSize);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
         static extern float sfFont_getLineSpacing(IntPtr CPointer, uint characterSize);
@@ -254,7 +254,7 @@ namespace SFML.Graphics
         static extern float sfFont_getUnderlineThickness(IntPtr CPointer, uint characterSize);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
-        static extern IntPtr sfFont_getTexture(IntPtr CPointer, uint characterSize);
+        public static extern IntPtr sfFont_getTexture(IntPtr CPointer, uint characterSize);
 
         [DllImport(CSFML.graphics, CallingConvention = CallingConvention.Cdecl), SuppressUnmanagedCodeSecurity]
         static extern InfoMarshalData sfFont_getInfo(IntPtr CPointer);
