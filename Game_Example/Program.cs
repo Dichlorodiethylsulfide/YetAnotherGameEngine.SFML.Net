@@ -42,15 +42,16 @@ namespace Game_Example
         private const string ArialFont = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\arial.ttf";
         private const string Bullet = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Bullet.png";
         private const string ExitButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\ExitButton.png";
-        private const string SpawnButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\SpawnButton.png";
+        //private const string SpawnButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\SpawnButton.png";
         private const string Placeholder = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Placeholder Block 2.png";
 
+        public static Texture ButtonTexture;
+        public static Texture SpawnTexture;
         public static Texture BulletTexture;
         public static ECS.UI.Font Arial;
-        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1280, 720), "Engine Window", false, true, true);
+        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, true);
         public override void Initialise()
         {
-            var texture = new Texture(Placeholder);
 #if GAME_TEST
             AddNewSubsystem<NewCollisionSubsystem>();
             AddNewSubsystem<PlayerSubsystem>();
@@ -59,27 +60,29 @@ namespace Game_Example
             AddNewDataType<EnemyData>();
             AddNewDataType<BulletData>();
 
-            var buttonTexture = new Texture(ExitButton);
-            var spawnTexture = new Texture(SpawnButton);
+            BulletTexture = new Texture(ExitButton);
+            SpawnTexture = new Texture(Placeholder);
             BulletTexture = new Texture(Bullet);
             Arial = new ECS.UI.Font(ArialFont);
 
             var button = CObject.New();
-            button.AddData(buttonTexture);
-            button.AddData(new Transform(1152, 0, 128, 64, 0, 0));
+            button.AddData(ButtonTexture);
+            button.AddData(new Transform(-128, 0, 128, 64, 0, 0, 0, Anchor.TOP_RIGHT));
             button.AddData(new Button(() => Engine.Stop()));
 
+            /*
             var spawn = CObject.New();
             spawn.AddData(spawnTexture);
-            spawn.AddData(new Transform(1152, 64, 128, 64, 0, 0));
+            spawn.AddData(new Transform(-128, 64, 128, 64, 0, 0, 0, Anchor.TOP_RIGHT));
             spawn.AddData(new Button(() => {
                 var enemy = CObject.New();
                 enemy.AddData(texture.SetModifiedTextureColor(Color.Red));
-                enemy.AddData(new Transform(Random.Next(0, (int)Settings.WindowDimensions.X), Random.Next(0, (int)Settings.WindowDimensions.Y), 32, 32));
+                enemy.AddData(new Transform(RNG.Next(0, (int)Settings.WindowDimensions.X), RNG.Next(0, (int)Settings.WindowDimensions.Y), 32, 32));
                 enemy.AddData(new EnemyData(10, 10, 100));
                 enemy.AddData(new Collider());
                 enemy.AddData(new CString("Enemy"));
             }));
+            */
 
             var text = CObject.New();
             text.AddData(new ECS.UI.Text("Health: NaN", Arial, 20));
@@ -92,13 +95,15 @@ namespace Game_Example
             text2.AddData(new CString("KillCounter"));
 
             var player = CObject.New();
-            player.AddData(texture.SetModifiedTextureColor(Color.Blue));
+            player.AddData(SpawnTexture.SetModifiedTextureColor(Color.Blue));
             player.AddData(new Transform(100, 100, 32, 32));
-            player.AddData(new PlayerData(100, 100));
+            player.AddData(new PlayerData(100, 100, 1f));
             player.AddData(new Collider());
             player.AddData(new CString("Player 1"));
             
 #elif BRUTE_FORCE || BRUTE_FORCE_RENDERING
+            AddNewSubsystem<MovementSubsystem>();
+
             var counter = 1000;
             for(int y = 0; y < counter; y++)
             {
@@ -114,22 +119,34 @@ namespace Game_Example
                 }
             }
 #endif
-                }
-            }
+        }
+    }
+#if BRUTE_FORCE || BRUTE_FORCE_RENDERING
+    internal class MovementSubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            UnmanagedCSharp.Objects.Iterate((ref Transform transform) =>
+            {
+                transform.Position += new Vector2f(1, 1);
+            });
+        }
+    }
+#endif
+    
     internal class PlayerSubsystem : Subsystem
     {
         public CObject PlayerObject;
-        public ByRef<ECS.UI.Text> Health;
+        public ByRefData<ECS.UI.Text> Health;
         public override void Startup()
         {
-            PlayerObject = Entities.Get("Player 1");
-            Health = Entities.GetRef<ECS.UI.Text>("Health");
+            PlayerObject = UnmanagedCSharp.Objects.Get("Player 1");
+            Health = UnmanagedCSharp.Objects.GetDataRef<ECS.UI.Text>("Health");
         }
         public override void Update(float deltaSeconds)
         {
-            PlayerObject.WriteData((ref Transform transform) =>
+            PlayerObject.WriteData2((ref Transform transform, ref PlayerData player) =>
             {
-                var player = PlayerObject.GetData<PlayerData>();
                 if (Input.GetKeyPressed(Key.W))
                 {
                     transform.Position += new Vector2f(0, -player.Speed * deltaSeconds);
@@ -146,7 +163,8 @@ namespace Game_Example
                 {
                     transform.Position += new Vector2f(player.Speed * deltaSeconds, 0);
                 }
-                if (Input.GetMouseButtonPressed(0))
+                player.AttackSpeed -= deltaSeconds;
+                if (player.AttackSpeed <= 0 && Input.GetMouseButtonPressed(0))
                 {
                     var direction = transform.Position.Direction(Input.GetMousePosition());
                     var cBullet = CObject.New();
@@ -154,6 +172,7 @@ namespace Game_Example
                     cBullet.AddData(new Transform(transform.Position.X, transform.Position.Y, 12, 17, 6, 8.5f, direction.ToRotation()));
                     cBullet.AddData(new BulletData(direction, 200f, 1));
                     cBullet.AddData(new Collider());
+                    player.AttackSpeed = 1f;
                 }
             });
             Health.VolatileWrite((ref ECS.UI.Text text) =>
@@ -161,7 +180,8 @@ namespace Game_Example
                 text.ChangeText("Health: " + PlayerObject.GetData<PlayerData>().Health);
             });
             
-            Entities.IterateWithObject((ref BulletData bullet, ref Transform transform, ref CObject cObject) =>
+            
+            UnmanagedCSharp.Objects.IterateWithObject((ref BulletData bullet, ref Transform transform, ref CObject cObject) =>
             {
                 transform.Position += bullet.Direction * bullet.Speed * deltaSeconds;
                 bullet.LifeTime -= deltaSeconds;
@@ -174,30 +194,49 @@ namespace Game_Example
     }
     internal class EnemySubsystem : Subsystem
     {
-        //public Transform PlayerTarget;
+        private float spawnTimer = 1f;
         public override void Update(float deltaSeconds)
         {
-            //Entities.Iterate((ref PlayerData player, ref Transform transform) => { PlayerTarget = transform; });
-            var PlayerTarget = Entities.Get<Transform>("Player 1");
+            spawnTimer -= deltaSeconds;
+            if(spawnTimer <= 0)
+            {
+                SpawnEnemy();
+                spawnTimer = 1f;
+            }
 
-            Entities.Iterate((ref EnemyData enemy, ref Transform transform) =>
+            var PlayerTarget = UnmanagedCSharp.Objects.GetData<Transform>("Player 1");
+
+            UnmanagedCSharp.Objects.Iterate((ref EnemyData enemy, ref Transform transform) =>
             {
                 var direction = (PlayerTarget.Position - transform.Position).Normalise();
 
                 transform.Position += direction * enemy.Speed * deltaSeconds;
             });
         }
+
+        public static void SpawnEnemy(int count = 1)
+        {
+            for(int i = 0; i < count; i++)
+            {
+                var enemy = CObject.New();
+                enemy.AddData(GameEngine.SpawnTexture.SetModifiedTextureColor(Color.Red));
+                enemy.AddData(new Transform(RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.X), RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.Y), 32, 32));
+                enemy.AddData(new EnemyData(10, 10, 100));
+                enemy.AddData(new Collider());
+                enemy.AddData(new CString("Enemy"));
+            }
+        }
     }
     internal class NewCollisionSubsystem : CollisionSubsystem
     {
         public CObject PlayerObject;
-        public ByRef<ECS.UI.Text> KillCounter;
+        public ByRefData<ECS.UI.Text> KillCounter;
 
         public override void Startup()
         {
             VerifyCollisions = true;
-            PlayerObject = Entities.Get("Player 1");
-            KillCounter = Entities.GetRef<ECS.UI.Text>("KillCounter");
+            PlayerObject = UnmanagedCSharp.Objects.Get("Player 1");
+            KillCounter = UnmanagedCSharp.Objects.GetDataRef<ECS.UI.Text>("KillCounter");
         }
         public override void Update(float deltaSeconds)
         {
@@ -230,29 +269,32 @@ namespace Game_Example
                 });
             }
 
-            var bullets = GetPossibleCollisions.Where(x => x.Key.HasDataOf<BulletData>());//GetVerifiedCollisions.Where(x => x.Key.HasDataOf<BulletData>());
+            var bullets = GetPossibleCollisions.Where(x => x.Key.HasDataOf<BulletData>());
             foreach (var bullet in bullets)
             {
                 var hit = bullet.Value.Where(x => x.HasDataOf<EnemyData>());
                 var count = hit.Count();
                 if (count == 0)
                     continue;
-                hit.First().WriteData((ref EnemyData data) =>
+                if(hit.First() is CObject cObject && !cObject.IsActiveNull())
                 {
-                    data.Health -= bullet.Key.GetData<BulletData>().Damage;
-                    CObject.Destroy(bullet.Key);
-                    if (data.Health <= 0)
+                    cObject.WriteData((ref EnemyData data) =>
                     {
-                        CObject.Destroy(hit.First());
-                        var kills = "Kill count: ";
-                        PlayerObject.WriteData((ref PlayerData player) =>
+                        data.Health -= bullet.Key.GetData<BulletData>().Damage;
+                        CObject.Destroy(bullet.Key);
+                        if (data.Health <= 0)
                         {
-                            ++player.KillCount;
-                            kills += player.KillCount;
-                        });
-                        KillCounter.VolatileWrite((ref ECS.UI.Text text) => text.ChangeText(kills));
-                    }
-                });
+                            CObject.Destroy(hit.First());
+                            var kills = "Kill count: ";
+                            PlayerObject.WriteData((ref PlayerData player) =>
+                            {
+                                ++player.KillCount;
+                                kills += player.KillCount;
+                            });
+                            KillCounter.VolatileWrite((ref ECS.UI.Text text) => text.ChangeText(kills));
+                        }
+                    });
+                }
             }
             
         }
@@ -262,11 +304,13 @@ namespace Game_Example
         public int KillCount;
         public int Health;
         public float Speed;
-        public PlayerData(int health, float speed)
+        public float AttackSpeed;
+        public PlayerData(int health, float speed, float attackSpeed)
         {
             Health = health;
             Speed = speed;
             KillCount = 0;
+            AttackSpeed = attackSpeed;
         }
     }
     internal struct EnemyData : IComponentData
@@ -285,5 +329,18 @@ namespace Game_Example
             AttackCooldown = 1f;
         }
     }
-
+    public struct BulletData : IComponentData
+    {
+        public int Damage;
+        public Vector2f Direction;
+        public float Speed;
+        public float LifeTime;
+        public BulletData(Vector2f dir, float speed, int dmg = 10)
+        {
+            Damage = dmg;
+            Direction = dir;
+            Speed = speed;
+            LifeTime = 3f;
+        }
+    }
 }

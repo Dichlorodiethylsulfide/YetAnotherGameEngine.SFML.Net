@@ -4,9 +4,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>netcoreapp3.1</TargetFramework>
   </PropertyGroup>
-
   <ItemGroup>
-    <ProjectReference Include="..\ECSLibrary\ECSLibrary.csproj" />
+    <ProjectReference Include="../ECSCore/ECSCore.csproj" />
   </ItemGroup>
-
 </Project>

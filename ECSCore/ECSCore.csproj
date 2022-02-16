@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Memory" Version="4.5.4" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\src\SFML.Audio\SFML.Audio.csproj" />
     <ProjectReference Include="..\src\SFML.Graphics\SFML.Graphics.csproj" />
     <ProjectReference Include="..\src\SFML.System\SFML.System.csproj" />

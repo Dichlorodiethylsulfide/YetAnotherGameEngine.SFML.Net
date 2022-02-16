@@ -1,3 +1,6 @@
+#define DEBUG_TIMINGS
+//#undef DEBUG_TIMINGS
+
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,6 +9,7 @@ using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
 
+using System.Runtime;
 using System.Runtime.InteropServices;
 
 using SFML.Window;
@@ -18,6 +22,8 @@ using ECS.Graphics;
 using ECS.Physics;
 using ECS.Strings;
 using ECS.UI;
+using ECS.Library;
+using ECS.Maths;
 using ECS.Delegates;
 using ECS.GarbageCollection;
 
@@ -52,13 +58,14 @@ namespace ECS
     public static class Debug
     {
         public static void Log<T>(T loggable) => Console.WriteLine(loggable.ToString());
+        public static void Breakpoint() => Console.WriteLine("Hit a breakpoint.");
     }
-    public unsafe struct ByRef<T> where T : unmanaged
+    public unsafe struct ByRefData<T> where T : unmanaged
     {
-        public static readonly ByRef<T> Null = new ByRef<T>();
+        public static readonly ByRefData<T> Null = new ByRefData<T>();
 
         private T* ptr;
-        internal ByRef(CObject* cObject)
+        internal ByRefData(CObject* cObject)
         {
             if (!typeof(IComponentData).IsAssignableFrom(typeof(T)))
                 throw new Exception("Incompatible type.");
@@ -80,6 +87,19 @@ namespace ECS
         */
         public T VolatileRead() => *ptr;
         public void VolatileWrite(Ref<T> action) => action(ref *ptr);
+    }
+    public unsafe struct ByRefObject
+    {
+        public static readonly ByRefObject Null = new ByRefObject();
+        private CObject* ptr;
+
+        internal ByRefObject(CObject* ptr)
+        {
+            this.ptr = ptr;
+        }
+        internal CObject* VolatilePtr() => ptr;
+        public CObject VolatileRead() => *ptr;
+        public void VolatileWrite<T>(Ref<T> action) where T : unmanaged => action(ref *ptr->GetDataPointer<T>());
     }
     /*
     internal struct SafePtr
@@ -169,71 +189,110 @@ namespace ECS
         public static readonly CObject Null = new CObject();
 
         internal long Index;
+        internal bool NotDead; // Inverted so a null object will report as "Not NotDead" and so IsDefaultNull will report true
 
         internal IntPtr MetaPtr;
-        internal unsafe MetaSlot* Slot => (MetaSlot*)MetaPtr;
-        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(GetDataTableIndexFromLookup<T>());
-        internal unsafe bool HasDataOf(int index) => !IsDefaultNull() && MetaPtr != IntPtr.Zero && Slot->HasDataOf(index);
-        internal unsafe bool HasDataOfAll(params int[] indexes) => !IsDefaultNull() && MetaPtr != IntPtr.Zero && Slot->HasDataOfAll(indexes);
+        //internal unsafe MetaSlot* Slot => (MetaSlot*)MetaPtr;
+        internal unsafe MetaData* Meta
+        {
+            get
+            {
+                fixed(IntPtr* ptr = &MetaPtr)
+                {
+                    return (MetaData*)*ptr;
+                }
+            }
+        }
+        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(LookupTable.GetDataTableIndex<T>());
+        internal unsafe bool HasDataOf(int index)
+        {
+            if(!IsActiveNull())
+                return Meta->HasDataOf(index);
+            return false;
+        }
+        internal unsafe bool HasDataOfAll(params int[] indexes)
+        {
+            if(!IsActiveNull())
+                return Meta->HasDataOfAll(indexes);
+            return false;
+        }
         public long ID { get; private set; }
         public void AddData<T>(T data) where T : unmanaged
         {
             if (!HasDataOf<T>())
-                AddObjectData(this, data);
+                Objects.AddObjectData(this, data);
         }
         internal unsafe T* GetDataPointer<T>() where T : unmanaged
         {
-            var index = GetDataTableIndexFromLookup<T>();
+            var index = LookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
                 {
-                    return Slot->Get(index)->ExposeData<T>();
+                    return Meta->Get<T>(index);
                 }
             }
             throw new NullReferenceException();
         }
         public T GetData<T>() where T : unmanaged
         {
-            var index = GetDataTableIndexFromLookup<T>();
+            var index = LookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
                 {
-                    return Slot->Get(index)->GetInternalData<T>();
+                    return *Meta->Get<T>(index);
                 }
             }
-            return default;
-            //throw new NullReferenceException();
+            //return default;
+            throw new NullReferenceException();
         }
         public void WriteData<T>(Ref<T> action) where T : unmanaged
         {
-            var index = GetDataTableIndexFromLookup<T>();
+            var index = LookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
                 {
-                    Slot->Get(index)->UseInternalData(action);
+                    action(ref *Meta->Get<T>(index));
                     return;
                 }
             }
-            //throw new NullReferenceException();
+            throw new NullReferenceException();
+        }
+        public void WriteData2<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
+        {
+            var index = LookupTable.GetDataTableIndex<T>();
+            var index2 = LookupTable.GetDataTableIndex<U>();
+            if(HasDataOf(index) && HasDataOf(index2))
+            {
+                unsafe
+                {
+                    action(ref *Meta->Get<T>(index),
+                           ref *Meta->Get<U>(index2));
+                    return;
+                }
+            }
+            throw new NullReferenceException();
         }
         public void OverwriteData<T>(T data) where T : unmanaged
         {
-            var index = GetDataTableIndexFromLookup<T>();
+            var index = LookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
                 {
-                    *Slot->Get(index)->ExposeData<T>() = data;
+                    *Meta->Get<T>(index) = data;
                     return;
                 }
             }
-            //throw new NullReferenceException();
+            throw new NullReferenceException();
         }
-        public unsafe bool IsActiveNull() => IsDefaultNull() || MetaPtr == IntPtr.Zero || Slot->MaxSize == 0;
-        public bool IsDefaultNull() => this.ID <= 0;
+        /// <summary>
+        /// Used to avoid AccessViolation and NullReference Exceptions
+        /// </summary>
+        /// <returns>False if object can be used, so !IsActiveNull() is the correct existence check, otherwise True</returns>
+        public unsafe bool IsActiveNull() => !NotDead || this.ID <= 0 || MetaPtr == IntPtr.Zero || Meta->MaxSize == 0;
         public override int GetHashCode() => (int)this.ID;
         public bool Equals(CObject other) => this.ID == other.ID;
         public void Dispose()
@@ -245,12 +304,13 @@ namespace ECS
         {
             unsafe
             {
-                Slot->Dispose();
+                Meta->Dispose();
             }
             Free(MetaPtr);
             MetaPtr = IntPtr.Zero;
             ID = 0;
             Index = -1;
+            NotDead = false;
         }
         public static void Destroy(ref CObject obj)
         {
@@ -261,14 +321,11 @@ namespace ECS
         {
             unsafe
             {
-                ObjectTablePtr->RemoveObjectAtIndex((int)obj.Index);
-            }
-        }
-        public static void Destroy(int index) // memset block will return 0 for index and delete the object at the 0th position, not good
-        {
-            unsafe
-            {
-                Destroy(ObjectTablePtr->GetObjectAtIndex(index));
+                lock(Subsystem.SyncRoot)
+                {
+                    Objects.RemoveObjectAtIndex((int)obj.Index);
+                    obj.InternalDispose();
+                }
             }
         }
         internal static CObject New(long index)
@@ -277,12 +334,13 @@ namespace ECS
             {
                 ID = index,
                 Index = index - 1,
-                MetaPtr = MetaSlot.New()
+                MetaPtr = MetaData.New(),
+                NotDead = true
                 //MetaPtr = MetaCObject.New(),
             };
             return obj;
         }
-        public static CObject New() => AddNewObject(incrementer++);
+        public static CObject New() => Objects.AddNewObject(incrementer++);
     }
     internal static class CAllocation
     {
@@ -301,7 +359,1167 @@ namespace ECS
     }
     public static unsafe class UnmanagedCSharp
     {
-        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, animations is 3, so should be 4
+        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
+        private static int DefaultDataTableSize = 0;
+        private static IntPtr Table = IntPtr.Zero;
+        internal static LookupTable* TablePtr => (LookupTable*)Table;
+        internal static int DataTableEntries => TablePtr->Entries - DataTableStartIndex;
+        internal static Hook* ObjectTablePtr => (Hook*)*&TablePtr->Value0;
+        internal static Hook* TextureTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 1 );
+        internal static AABBTree* Tree => (AABBTree*)*( ( &TablePtr->Value0 ) + 2 );
+        public static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64)
+        {
+            LookupTable.CreateTable(mainSize + DataTableStartIndex);
+            LookupTable.AddNewType(CObject.Null, objectSize);
+            LookupTable.AddNewType(TextureEntry.Null, textureSize);
+            LookupTable.CreateCollisionTree(objectSize);
+            DefaultDataTableSize = defaultDataSize;
+            LookupTable.AddNewDataType<Texture>();
+            LookupTable.AddNewDataType<Transform>();
+            LookupTable.AddNewDataType<CString>();
+            LookupTable.AddNewDataType<Button>();
+            LookupTable.AddNewDataType<UI.Text>();
+            Tree->transformDataTableIndex = LookupTable.GetDataTableIndex<Transform>();
+            
+        }
+        public struct CTuple<T1, T2> where T1 : unmanaged where T2 : unmanaged
+        {
+            public static readonly CTuple<T1, T2> Null = new CTuple<T1,T2>();
+            public T1 Item1;
+            public T2 Item2;
+            public CTuple(T1 item1, T2 item2)
+            {
+                Item1 = item1;
+                Item2 = item2;
+            }
+        }
+        internal struct LookupTable
+        {
+            private static readonly Dictionary<Type, int> DataTableLookup = new Dictionary<Type, int>();
+
+            public int Entries;
+            public int MaxSize;
+            public int AllocatedBytes;
+            public IntPtr Value0;
+
+            internal void Add(IntPtr ptr)
+            {
+                if (Entries >= MaxSize)
+                    throw new Exception("Not enough space in table");
+                fixed (IntPtr* ptrPtr = &Value0)
+                {
+                    *( ptrPtr + Entries++ ) = ptr;
+                }
+            }
+
+            private int getDataTable(int type)
+            {
+                fixed(IntPtr* ptrPtr = &Value0)
+                {
+                    for (int i = DataTableStartIndex; i < Entries; i++)
+                    {
+                        var hook = (Hook*)*(ptrPtr + i);
+                        if (hook->DataType == type)
+                            return i;
+                    }
+                    throw new ArgumentException("Invalid type.");
+                }
+            }
+
+            private void addNewType<T>(T empty, bool is_data_type, int size = 1024) where T : unmanaged
+            {
+                Hook.NewTableChain<T>(size);
+                if(is_data_type)
+                    DataTableLookup.Add(typeof(T), getDataTable(typeof(T).GetHashCode()));
+            }
+
+            private Hook* getDataTableFromIndex(int index)
+            {
+                fixed (IntPtr* ptrPtr = &Value0)
+                {
+                    if (index < 0 || index >= TablePtr->MaxSize)
+                        throw new ArgumentOutOfRangeException("index");
+                    return (Hook*)*( ptrPtr + index );
+                }
+            }
+
+            public static void AddNewDataType<T>() where T : unmanaged
+            {
+                if(!typeof(IComponentData).IsAssignableFrom(typeof(T)))
+                {
+                    throw new ArgumentException("Invalid Generic.");
+                }
+                TablePtr->addNewType(new T(), true, DefaultDataTableSize);
+            }
+
+            public static void AddNewType<T>(T empty, int size = 1024) where T : unmanaged => TablePtr->addNewType(empty, false, size);
+
+            public static int GetDataTableIndex<T>()
+            {
+                if (DataTableLookup.TryGetValue(typeof(T), out var value))
+                    return value;
+                throw new ArgumentException("Invalid Generic.");
+            }
+            public static Hook* GetDataTable<T>() where T : unmanaged
+            {
+                return TablePtr->getDataTableFromIndex(GetDataTableIndex<T>());
+            }
+            internal static Hook* GetDataTableFromIndex(int index)
+            {
+                return TablePtr->getDataTableFromIndex(index);
+            }
+
+            internal static void CreateTable(int size)
+            {
+                var bytes = ( sizeof(int) * 3 ) + ( sizeof(IntPtr) * size );
+                Table = Malloc(bytes);
+                MemSet(Table, 0, bytes);
+                var table = (LookupTable*)Table;
+                *table = new LookupTable();
+                table->Entries = 0;
+                table->MaxSize = size;
+                table->AllocatedBytes = bytes;
+            }
+
+            internal static void CreateCollisionTree(int size)
+            {
+                var bytes = sizeof(AABBTree);
+                var entry = Malloc(bytes);
+                MemSet(entry, 0, bytes);
+                var tree = (AABBTree*)entry;
+                *tree = new AABBTree(size);
+                TablePtr->Add(entry);
+            }
+        }
+
+        public delegate bool PredicateIn<T>(in T t);
+        public delegate void Ref<T0>(ref T0 data0);
+        public delegate void RefWithObject<T0, O0>(ref T0 data0, ref O0 object0);
+        public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
+        public delegate void RefWithObject<T0, T1, O0>(ref T0 data0, ref T1 data1, ref O0 object0);
+        public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
+        public delegate void In<T0>(in T0 data0);
+        public delegate bool Compare<T0>(in T0 data);
+
+        /*
+        internal struct Hook
+        {
+            public int DataType;
+            public IntPtr GenericTypeHook;
+        }
+        internal struct HookIterator<T> where T : unmanaged
+        {
+            private Hook<T>* internalHook;
+            private int currentIndex;
+            private int totalReturned;
+            private int expectedLimit;
+            private bool limitReached;
+            private Predicate<T> predicateCheck;
+            private LinkableTable<T>* currentTable;
+
+            public T* Next
+            {
+                get
+                {
+                    T* next = null;
+                    while (!limitReached)
+                    {
+                        if (currentIndex >= internalHook->TableSize)
+                        {
+                            if (currentTable->Next == null)
+                            {
+                                break;
+                            }
+                            currentIndex = 0;
+                            currentTable = currentTable->Next;
+                        }
+                        if (currentTable->TryGetRef(internalHook->Empty, currentIndex++, out next) && predicateCheck(*next))
+                        {
+                            totalReturned++;
+                            if (totalReturned >= expectedLimit)
+                                limitReached = true;
+                            return next;
+                        }
+                    }
+                    return next;
+                }
+            }
+
+            public static HookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
+            {
+                var iterator = new HookIterator<CObject>();
+                iterator.internalHook = ObjectTablePtr;
+                iterator.currentTable = iterator.internalHook->Start;
+                iterator.currentIndex = 0;
+                iterator.totalReturned = 0;
+                iterator.expectedLimit = expectedLimit;
+                iterator.limitReached = expectedLimit > 0 ? false : true;
+                iterator.predicateCheck = check;
+                return iterator;
+            }
+            
+        }
+        internal struct Hook<T> where T : unmanaged
+        {
+            public int DataType;
+            public int Count;
+            public int TableSize;
+            public T Empty;
+            public LinkableTable<T>* Start;
+            //Next available table
+            //Last table
+
+            public int MaxCapacity => Count * TableSize;
+            public int TotalHookSize()
+            {
+                int size = 0;
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    size += table->MaxSize;
+                    table = table->Next;
+                }
+                return size;
+            }
+            public int TotalHookCount()
+            {
+                int count = 0;
+                var table = Start;
+                for(int i = 0; i < Count; i++)
+                {
+                    count += table->Count;
+                    table = table->Next;
+                }
+                return count;
+            }
+            private CTuple<int, int> GetTableAndEntryIndexes(int index)
+            {
+                var tableIndex = index / TableSize;
+                var entryIndex = index - ( tableIndex * TableSize );
+                return new CTuple<int, int>(tableIndex, entryIndex);
+            }
+            private LinkableTable<T>* GetTable(int index)
+            {
+                if (index < 0 || index >= Count)
+                    throw new Exception();
+                var table = Start;
+                for (int i = 0; i < index; i++)
+                    table = table->Next;
+                if (table == null)
+                    throw new Exception();
+                return table;
+            }
+            public T* FindRef(PredicateIn<T> predicate)
+            {
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    for (int j = 0; j < TableSize; j++)
+                    {
+                        if (predicate(in *table->GetRef(j)))
+                        {
+                            return table->GetRef(j);
+                        }
+                    }
+                    table = table->Next;
+                }
+                return null;
+            }
+            public T Find(PredicateIn<T> predicate)
+            {
+                var item = FindRef(predicate);
+                if (item == null)
+                    throw new NullReferenceException();
+                return *item;
+            }
+
+            public T* GetRef(int index)
+            {
+                var tuple = GetTableAndEntryIndexes(index);
+                return GetTable(tuple.Item1)->GetRef(tuple.Item2);
+            }
+
+            public T Get(int index) => *GetRef(index);
+            public int AddNew(T item)
+            {
+                fixed(LinkableTable<T>** start = &Start)
+                {
+                    var index = 0;
+                    var table = *start;
+                    for (int i = 0; i < Count; i++)
+                    {
+                        if (table->Count >= table->MaxSize)
+                        {
+                            index += TableSize;
+                            if (table->Next == null)
+                                break;
+                            table = table->Next;
+                            continue;
+                        }
+                        index += table->AddNew(item);
+                        return index;
+                    }
+
+                    if (table == null)
+                        throw new Exception();
+                    if (table->Next != null)
+                        throw new Exception();
+
+                    NewTable(table);
+                    index += table->Next->AddNew(item);
+                    return index;
+                }
+            }
+            public void RemoveAt(int index)
+            {
+                if (index < 0 || index >= MaxCapacity)
+                    throw new Exception();
+                var tuple = GetTableAndEntryIndexes(index);
+                var table = Start;
+                for (int i = 0; i < tuple.Item1; i++)
+                    table = table->Next;
+                if (table == null)
+                    throw new Exception();
+                table->RemoveAt(tuple.Item2, Empty);
+                if (table->Count == 0 && table->WriteIndex == table->MaxSize)
+                {
+                    table->WriteIndex = 0;
+                }
+            }
+            private void NewTable(LinkableTable<T>* table)
+            {
+                table->Next = LinkableTable<T>.NewTable(table, TableSize, Empty);
+                Count++;
+            }
+            public void AppendNewTable()
+            {
+                var table = Start;
+                while (table->Next != null)
+                    table = table->Next;
+                NewTable(table);
+            }
+
+            public void DebugHook()
+            {
+                var total = 0;
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    total += table->DebugTable(Empty);
+                    table = table->Next;
+                }
+                Console.WriteLine("Total Tables: " + Count);
+                Console.WriteLine("Total Objects: " + total);
+            }
+
+            public static void NewTableChain(T empty, int size = 1024)
+            {
+                var outer = Malloc(sizeof(Hook));
+                MemSet(outer, 0, sizeof(Hook));
+                var outerHook = (Hook*)outer;
+                outerHook->DataType = typeof(T).GetHashCode();
+                var bytes = sizeof(Hook<T>);
+                outerHook->GenericTypeHook = Malloc(bytes);
+                MemSet(outerHook->GenericTypeHook, 0, bytes);
+                var hook = (Hook<T>*)outerHook->GenericTypeHook;
+                hook->DataType = outerHook->DataType;
+                hook->Count = 1;
+                hook->TableSize = size;
+                hook->Empty = empty;
+                hook->Start = LinkableTable<T>.NewTable(null, size, hook->Empty);
+                TablePtr->Add(outer);
+            }
+        }
+        internal struct LinkableTable<T> where T : unmanaged
+        {
+            public int ReadIndex;
+            public int WriteIndex;
+            public int Count;
+            public int MaxSize;
+            public int AllocatedBytes;
+            public LinkableTable<T>* Previous;
+            public LinkableTable<T>* Next;
+            public T Value0;
+
+            public int DebugTable(T empty)
+            {
+                fixed (T* ptr = &Value0)
+                {
+                    var counter = 0;
+                    for (int i = 0; i < MaxSize; i++)
+                    {
+                        var Object = ptr + i;
+                        if (!Object->Equals(empty))
+                            counter++;
+                    }
+                    Console.WriteLine(counter + " / " + Count);
+                    return counter;
+                }
+            }
+
+            public void ClearTable(T empty)
+            {
+                fixed (T* ptr = &Value0)
+                {
+                    for (int i = 0; i < MaxSize; i++)
+                    {
+                        *( ptr + i ) = empty;
+                    }
+                }
+            }
+
+            public int AddNew(T item)
+            {
+                if (WriteIndex >= MaxSize || Count >= MaxSize)
+                    throw new Exception();
+                fixed (T* ptr = &Value0)
+                {
+                    *( ptr + WriteIndex++ ) = item;
+                    Count++;
+                }
+                return WriteIndex - 1;
+            }
+
+            public void RemoveAt(int index, T empty)
+            {
+                if (index < 0 || index >= MaxSize)
+                    throw new Exception();
+                fixed (T* ptr = &Value0)
+                {
+                    if (( ptr + index )->Equals(empty))
+                        return;
+                    *( ptr + index ) = empty;
+                    Count--;
+                }
+            }
+
+            public bool TryGetRef(T empty, int index, out T* ptr)
+            {
+                ptr = GetRef(index);
+                return !ptr->Equals(empty);
+            }
+
+            public T* GetRef(int index)
+            {
+                if (index < 0 || index >= MaxSize)
+                    throw new Exception();
+                fixed (T* ptr = &Value0)
+                {
+                    return ptr + index;
+                }
+            }
+            public T Get(int index)
+            {
+                return *GetRef(index);
+            }
+
+            public static LinkableTable<T>* NewTable(LinkableTable<T>* previous, int size, T empty)
+            {
+                var bytes = ( sizeof(int) * 5 ) + ( sizeof(LinkableTable<T>*) * 2 ) + ( sizeof(T) * size );
+                var entry = Malloc(bytes);
+                MemSet(entry, 0, bytes);
+                var table = (LinkableTable<T>*)entry;
+                table->AllocatedBytes = bytes;
+                table->ReadIndex = 0;
+                table->WriteIndex = 0;
+                table->Count = 0;
+                table->MaxSize = size;
+                table->Previous = previous;
+                table->Next = null;
+                table->ClearTable(empty);
+                return table;
+            }
+        }
+        */
+        internal struct HookIterator<T> where T : unmanaged
+        {
+            private Hook* internalHook;
+            private int currentIndex;
+            private int totalReturned;
+            private int expectedLimit;
+            private bool limitReached;
+            private Predicate<T> predicateCheck;
+            private LinkableTable* currentTable;
+
+            public T* Next
+            {
+                get
+                {
+                    T* next = null;
+                    while (!limitReached)
+                    {
+                        if (currentIndex >= internalHook->TableSize)
+                        {
+                            if (currentTable->Next == null)
+                            {
+                                break;
+                            }
+                            currentIndex = 0;
+                            currentTable = currentTable->Next;
+                        }
+                        if (currentTable->TryGetRef<T>(new T(), currentIndex++, out next) && predicateCheck(*next))
+                        {
+                            totalReturned++;
+                            if (totalReturned >= expectedLimit)
+                                limitReached = true;
+                            return next;
+                        }
+                    }
+                    return next;
+                }
+            }
+            public void Reset()
+            {
+                currentTable = internalHook->Start;
+                currentIndex = 0;
+                totalReturned = 0;
+                limitReached = expectedLimit > 0 ? false : true;
+            }
+
+            public static HookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
+            {
+                var iterator = new HookIterator<CObject>();
+                iterator.internalHook = ObjectTablePtr;
+                iterator.currentTable = iterator.internalHook->Start;
+                iterator.currentIndex = 0;
+                iterator.totalReturned = 0;
+                iterator.expectedLimit = expectedLimit;
+                iterator.limitReached = expectedLimit > 0 ? false : true;
+                iterator.predicateCheck = check;
+                return iterator;
+            }
+        }
+
+        internal struct Hook
+        {
+            public int SizeOfData;
+            public int DataType;
+            public int Count;
+            public int TableSize;
+            public IntPtr Empty;
+            public LinkableTable* Start;
+            public ReadOnlySpan<byte> EmptySpan
+            {
+                get
+                {
+                    fixed (IntPtr* ptr = &Empty)
+                    {
+                        return new ReadOnlySpan<byte>(( *ptr ).ToPointer(), SizeOfData);
+                    }
+                }
+            }
+            public int MaxCapacity => Count * TableSize;
+            public int TotalHookSize()
+            {
+                int size = 0;
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    size += table->MaxSize;
+                    table = table->Next;
+                }
+                return size;
+            }
+            public int TotalHookCount()
+            {
+                int count = 0;
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    count += table->Count;
+                    table = table->Next;
+                }
+                return count;
+            }
+            private CTuple<int, int> GetTableAndEntryIndexes(int index)
+            {
+                var tableIndex = index / TableSize;
+                var entryIndex = index - ( tableIndex * TableSize );
+                return new CTuple<int, int>(tableIndex, entryIndex);
+            }
+            private LinkableTable* GetTable<T>(int index) where T : unmanaged
+            {
+                var table = Start;
+                for (int i = 0; i < index; i++)
+                    table = table->Next;
+                if (table == null)
+                    throw new Exception();
+                return table;
+            }
+
+            public T* FindRef<T>(PredicateIn<T> predicate) where T : unmanaged
+            {
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    for (int j = 0; j < TableSize; j++)
+                    {
+                        if (predicate(in *table->GetRef<T>(j)))
+                        {
+                            return table->GetRef<T>(j);
+                        }
+                    }
+                    table = table->Next;
+                }
+                return null;
+            }
+            public T Find<T>(PredicateIn<T> predicate) where T : unmanaged
+            {
+                var item = FindRef(predicate);
+                if (item == null)
+                    throw new NullReferenceException();
+                return *item;
+            }
+
+            public T* GetRef<T>(int index) where T : unmanaged
+            {
+                var tuple = GetTableAndEntryIndexes(index);
+                return GetTable<T>(tuple.Item1)->GetRef<T>(tuple.Item2);
+            }
+
+            public T Get<T>(int index) where T : unmanaged => *GetRef<T>(index);
+
+            public int AddNew<T>(T item) where T : unmanaged
+            {
+                var index = 0;
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    if (table->Count >= table->MaxSize)
+                    {
+                        index += TableSize;
+                        if (table->Next == null)
+                            break;
+                        table = table->Next;
+                        continue;
+                    }
+                    index += table->AddNew(item);
+                    return index;
+                }
+
+                if (table == null)
+                    throw new Exception();
+                if (table->Next != null)
+                    throw new Exception();
+
+                NewTable<T>(table);
+                index += table->Next->AddNew(item);
+                return index;
+            }
+            public void RemoveAt<T>(int index) where T : unmanaged
+            {
+                if (index < 0 || index >= MaxCapacity)
+                    throw new Exception();
+                var tuple = GetTableAndEntryIndexes(index);
+                var table = Start;
+                for (int i = 0; i < tuple.Item1; i++)
+                    table = table->Next;
+                if (table == null)
+                    throw new Exception();
+                table->RemoveAt(tuple.Item2, new T());
+                if (table->Count == 0 && table->WriteIndex == table->MaxSize)
+                {
+                    table->WriteIndex = 0;
+                }
+            }
+            public void ByteRemovalAt(int index)
+            {
+                if (index < 0 || index >= MaxCapacity)
+                    throw new Exception();
+                var tuple = GetTableAndEntryIndexes(index);
+                var table = Start;
+                for (int i = 0; i < tuple.Item1; i++)
+                    table = table->Next;
+                if (table == null)
+                    throw new Exception();
+                table->ByteRemovalAt(index, SizeOfData, EmptySpan);
+                if (table->Count == 0 && table->WriteIndex == table->MaxSize)
+                {
+                    table->WriteIndex = 0;
+                }
+            }
+            private void NewTable<T>(LinkableTable* table) where T : unmanaged
+            {
+                table->Next = LinkableTable.NewTable(table, TableSize, new T());
+                Count++;
+            }
+            public void AppendNewTable<T>() where T : unmanaged
+            {
+                var table = Start;
+                while (table->Next != null)
+                    table = table->Next;
+                NewTable<T>(table);
+            }
+
+            public void DebugHook<T>() where T : unmanaged
+            {
+                var total = 0;
+                var table = Start;
+                for (int i = 0; i < Count; i++)
+                {
+                    total += table->DebugTable(new T());
+                    table = table->Next;
+                }
+                Console.WriteLine("Total Tables: " + Count);
+                Console.WriteLine("Total Objects: " + total);
+            }
+
+            public static void NewTableChain<T>(int size = 1024) where T : unmanaged
+            {
+                var outer = Malloc(sizeof(Hook));
+                MemSet(outer, 0, sizeof(Hook));
+                var hook = (Hook*)outer;
+                hook->Empty = Malloc(sizeof(T));
+                MemSet(hook->Empty, 0, sizeof(T));
+                hook->DataType = typeof(T).GetHashCode();
+                hook->SizeOfData = sizeof(T);
+                hook->Count = 1;
+                hook->TableSize = size;
+                hook->Start = LinkableTable.NewTable(null, size, new T());
+                TablePtr->Add(outer);
+            }
+        }
+        internal struct LinkableTable
+        {
+            public int ReadIndex;
+            public int WriteIndex;
+            public int Count;
+            public int MaxSize;
+            public int AllocatedBytes;
+            public LinkableTable* Previous;
+            public LinkableTable* Next;
+            public byte Value0;
+
+            public int DebugTable<T>(T empty) where T : unmanaged
+            {
+                fixed (byte* ptr = &Value0)
+                {
+                    var counter = 0;
+                    for (int i = 0; i < MaxSize; i++)
+                    {
+                        var Object = (T*)ptr + i;
+                        if (!Object->Equals(empty))
+                            counter++;
+                    }
+                    Console.WriteLine(counter + " / " + Count);
+                    return counter;
+                }
+            }
+
+            public void ClearTable<T>(T empty) where T : unmanaged
+            {
+                fixed (byte* ptr = &Value0)
+                {
+                    for (int i = 0; i < MaxSize; i++)
+                    {
+                        *( (T*)ptr + i ) = empty;
+                    }
+                }
+            }
+
+            public int AddNew<T>(T item) where T : unmanaged
+            {
+                if (WriteIndex >= MaxSize || Count >= MaxSize)
+                    throw new Exception();
+                fixed (byte* ptr = &Value0)
+                {
+                    *( (T*)ptr + WriteIndex++ ) = item;
+                    Count++;
+                }
+                return WriteIndex - 1;
+            }
+
+            public void RemoveAt<T>(int index, T empty) where T : unmanaged
+            {
+                if (index < 0 || index >= MaxSize)
+                    throw new Exception();
+                fixed (byte* ptr = &Value0)
+                {
+                    if (( (T*)ptr + index )->Equals(empty))
+                        return;
+                    *( (T*)ptr + index ) = empty;
+                    Count--;
+                }
+            }
+            public void ByteRemovalAt(int index, int dataSize, ReadOnlySpan<byte> emptySpan)
+            {
+                if (index < 0 || index >= MaxSize)
+                    throw new Exception();
+                fixed (byte* ptr = &Value0)
+                {
+                    var t = new Span<byte>(ptr + ( index * dataSize ), dataSize);
+                    if (t.SequenceEqual(emptySpan))
+                        return;
+                    t.Clear();
+                    Count--;
+                }
+            }
+            public bool TryGetRef<T>(T empty, int index, out T* ptr) where T : unmanaged
+            {
+                ptr = GetRef<T>(index);
+                return !ptr->Equals(empty);
+            }
+            public T* GetRef<T>(int index) where T : unmanaged
+            {
+                if (index < 0 || index >= MaxSize)
+                    throw new Exception();
+                fixed (byte* ptr = &Value0)
+                {
+                    return (T*)ptr + index;
+                }
+            }
+            public T Get<T>(int index) where T : unmanaged
+            {
+                return *GetRef<T>(index);
+            }
+
+            public static LinkableTable* NewTable<T>(LinkableTable* previous, int size, T empty) where T : unmanaged
+            {
+                var bytes = ( sizeof(int) * 5 ) + sizeof(IntPtr) + ( sizeof(LinkableTable*) * 2 ) + ( sizeof(T) * size );
+                var entry = Malloc(bytes);
+                MemSet(entry, 0, bytes);
+                var table = (LinkableTable*)entry;
+                table->AllocatedBytes = bytes;
+                table->ReadIndex = 0;
+                table->WriteIndex = 0;
+                table->Count = 0;
+                table->MaxSize = size;
+                table->Previous = previous;
+                table->Next = null;
+                table->ClearTable(empty);
+                return table;
+            }
+        }
+        internal struct TextureEntry : IDisposable
+        {
+            public static readonly TextureEntry Null = new TextureEntry();
+            public int HashCode;
+            public IntRect TextureRect;
+            public IntPtr TexturePtr;
+            public Vector2u GetSize() => SFMLTexture.sfTexture_getSize(TexturePtr);
+            public void Dispose()
+            {
+                Free(TexturePtr);
+            }
+            public static TextureEntry New(string filename)
+            {
+                var rect = new IntRect();
+                var entry = new TextureEntry
+                {
+                    TexturePtr = SFMLTexture.sfTexture_createFromFile(filename, ref rect),
+                    TextureRect = rect,
+                    HashCode = filename.GetHashCode()
+                };
+                return entry;
+            }
+        }
+        public struct Objects
+        {
+            internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
+            {
+                var table = LookupTable.GetDataTable<T>();
+                var index = table->AddNew(data);
+                cObject.Meta->Insert(LookupTable.GetDataTableIndex<T>(), index, (IntPtr)table->GetRef<T>(index));
+            }
+            internal static CObject AddNewObject(long index)
+            {
+                var obj = CObject.New(index);
+                ObjectTablePtr->AddNew(obj);
+                return obj;
+            }
+            internal static void RemoveObjectAtIndex(int index)
+            {
+                ObjectTablePtr->RemoveAt<CObject>(index);
+            }
+            public static Dictionary<CObject, List<CObject>> VerifiedCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
+            public static Dictionary<CObject, List<CObject>> PossibleCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
+
+            public static CObject Get(string name) => GetRef(name).VolatileRead();
+            public static ByRefObject GetRef(string name) => GetRef((in CString _string) => _string.Equals(name));
+            public static T GetData<T>(string name) where T : unmanaged => GetDataRef<T>(name).VolatileRead();
+            public static ByRefData<T> GetDataRef<T>(string name) where T : unmanaged => GetDataRef<CString, T>((in CString _string) => _string.Equals(name));
+            internal static ByRefObject GetRef<T>(PredicateIn<T> predicate) where T : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
+                var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                var next = iterator.Next;
+                while(next != null)
+                {
+                    if(predicate(in *next->GetDataPointer<T>()))
+                    {
+                        return new ByRefObject(next);
+                    }
+                    next = iterator.Next;
+                }
+                return ByRefObject.Null;
+            }
+            internal static ByRefObject GetRef<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var index2 = LookupTable.GetDataTableIndex<U>();
+
+                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+
+                var size = Math.Min(tableCount, tableCount2);
+
+                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                var next = iterator.Next;
+                while (next != null)
+                {
+                    if (predicate(in *next->GetDataPointer<T>()))
+                    {
+                        return new ByRefObject(next);
+                    }
+                    next = iterator.Next;
+                }
+                return ByRefObject.Null;
+            }
+
+            internal static ByRefData<T> GetDataRef<T>(PredicateIn<T> predicate) where T : unmanaged => new ByRefData<T>(GetRef(predicate).VolatilePtr());
+            internal static ByRefData<U> GetDataRef<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged => new ByRefData<U>(GetRef<T, U>(predicate).VolatilePtr());
+
+            public static void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
+                var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                var next = iterator.Next;
+                while(next != null)
+                {
+                    action(ref *next->GetDataPointer<T>());
+                    next = iterator.Next;
+                }
+            }
+            public static void Iterate<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var index2 = LookupTable.GetDataTableIndex<U>();
+
+                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+
+                var size = Math.Min(tableCount, tableCount2);
+
+                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                var next = iterator.Next;
+                while (next != null)
+                {
+                    action(ref *next->GetDataPointer<T>(),
+                           ref *next->GetDataPointer<U>());
+                    next = iterator.Next;
+                }
+            }
+
+            public static void IterateWithObject<T, U>(RefWithObject<T, U, CObject> action, bool mutli_threaded = false) where T : unmanaged where U : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var index2 = LookupTable.GetDataTableIndex<U>();
+
+                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
+                var tableCount2 = LookupTable.GetDataTable<U>()->TotalHookCount();
+
+                var size = Math.Min(tableCount, tableCount2);
+
+                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                var next = iterator.Next;
+                while (next != null)
+                {
+                    action(ref *next->GetDataPointer<T>(),
+                           ref *next->GetDataPointer<U>(),
+                           ref *next);
+                    next = iterator.Next;
+                }
+            }
+            public static void PossibleCollisionQuery()
+            {
+                PossibleCollisionsThisFrame.Clear();
+                var index = LookupTable.GetDataTableIndex<Transform>();
+                var index2 = LookupTable.GetDataTableIndex<Collider>();
+
+                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+
+                var size = Math.Min(tableCount, tableCount2);
+
+                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                var next = iterator.Next;
+                while (next != null)
+                {
+                    var collider = next->GetDataPointer<Collider>();
+                    if (!collider->IsInTree)
+                    {
+                        Tree->InsertObject(next);
+                        collider->IsInTree = true;
+                    }
+                    else
+                    {
+                        Tree->UpdateObject(next);
+                    }
+                    next = iterator.Next;
+                }
+                // Return collisions
+                iterator.Reset();
+                next = iterator.Next;
+                while(next != null)
+                {
+                    if (Tree->QueryOverlaps(next) is List<CObject> list && list.Count > 0)
+                        PossibleCollisionsThisFrame.Add(*next, list);
+                    next = iterator.Next;
+                }
+            }
+            public static void VerifyCollisions(bool physics_enabled)
+            {
+                if (PossibleCollisionsThisFrame.Count == 0)
+                    return;
+                VerifiedCollisionsThisFrame.Clear();
+                var delta = CTime.DeltaTime;
+                foreach(var cObject in PossibleCollisionsThisFrame.Keys)
+                {
+                    var list = PossibleCollisionsThisFrame[cObject];
+                    var transform = cObject.GetDataPointer<Transform>();
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i].IsActiveNull())
+                            continue;
+
+                        var other = list[i].GetDataPointer<Transform>();
+                        if (!list[i].IsActiveNull() && transform->ExpensiveIntersection(other))
+                        {
+                            if (VerifiedCollisionsThisFrame.ContainsKey(cObject))
+                            {
+                                VerifiedCollisionsThisFrame[cObject].Add(list[i]);
+                            }
+                            else
+                            {
+                                VerifiedCollisionsThisFrame.Add(cObject, new List<CObject> { list[i] });
+                            }
+                        }
+
+                        if (physics_enabled)
+                        {
+                            // Get physics body and velocity
+
+                            var this_pos = transform->Position;
+                            var other_pos = other->Position;
+
+                            transform->Position -= this_pos.Direction(other_pos) * delta;
+                            other->Position -= other_pos.Direction(this_pos) * delta;
+                        }
+                    }
+                }
+            }
+        }
+        public struct Textures
+        {
+            public static IntPtr TryAddTexture(string filename)
+            {
+                var ptr = FindTexture(filename);
+                if(ptr == IntPtr.Zero)
+                    ptr = NewTexture(filename);
+                return ptr;
+            }
+            public static IntPtr FindTexture(string filename)
+            {
+                var entry = TextureTablePtr->FindRef((in TextureEntry x) => x.HashCode == filename.GetHashCode());
+                if (entry == null)
+                    return IntPtr.Zero;
+                return (IntPtr)entry;
+            }
+            public static IntPtr NewTexture(string filename)
+            {
+                var index = TextureTablePtr->AddNew(TextureEntry.New(filename));
+                return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
+            }
+        }
+        internal struct MetaData : IDisposable
+        {
+            public int MaxSize;
+            public CTuple<int, IntPtr> DataPtr;
+            public T* Get<T>(int tableIndex) where T : unmanaged
+            {
+                if (tableIndex < 0 || tableIndex >= MaxSize)
+                    return null;
+                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
+                {
+                    return (T*)( ptrPtr + tableIndex )->Item2;
+                }
+            }
+            public void Insert(int tableIndex, int index, IntPtr ptr)
+            {
+                if (tableIndex < 0 || tableIndex >= MaxSize)
+                    return;
+                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
+                {
+                    *( ptrPtr + tableIndex ) = new CTuple<int, IntPtr>(index, ptr);
+                }
+            }
+            public void Remove(int tableIndex)
+            {
+                if (tableIndex < 0 || tableIndex >= MaxSize)
+                    return;
+                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
+                {
+                    *( ptrPtr + tableIndex ) = CTuple<int, IntPtr>.Null;
+                }
+            }
+            public bool HasDataOf(int tableIndex)
+            {
+                if (tableIndex < 0 || tableIndex >= MaxSize)
+                    return false;
+                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
+                {
+                    return ( ptrPtr + tableIndex )->Item2 != IntPtr.Zero;
+                }
+            }
+            public bool HasDataOfAll(int[] tableIndexes)
+            {
+                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
+                {
+                    for (int i = 0; i < tableIndexes.Length; i++)
+                    {
+                        var index = tableIndexes[i];
+                        if (index < 0 || index >= MaxSize)
+                            return false;
+                        if (( ptrPtr + index )->Item2 == IntPtr.Zero)
+                            return false;
+                    }
+                    return true;
+                }
+            }
+            public static IntPtr New()
+            {
+                var size = TablePtr->Entries + 1;
+                var bytes = sizeof(int) + ( sizeof(CTuple<int, IntPtr>) * size );
+                var ptr = Malloc(bytes);
+                MemSet(ptr, 0, bytes);
+                var metaSlot = new MetaData()
+                {
+                    MaxSize = size
+                };
+                *(MetaData*)ptr = metaSlot;
+                return ptr;
+            }
+            public void Dispose()
+            {
+                //throw new NotImplementedException();
+                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
+                {
+                    for(int i = DataTableStartIndex; i < this.MaxSize - 1; i++)
+                    {
+                        var tuple = *( ptrPtr + i );
+                        if(tuple.Item2 != IntPtr.Zero)
+                        {
+                            var table = LookupTable.GetDataTableFromIndex(i);
+                            table->ByteRemovalAt(tuple.Item1);
+                        }
+                    }
+                }
+            }
+        }
+        /*
+        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
         internal static LookupTable* TablePtr => (LookupTable*)Table;
@@ -401,9 +1619,10 @@ namespace ECS
             var entry = Malloc(bytes);
             MemSet(entry, 0, bytes);
             var tree = (AABBTree*)entry;
-            *tree = new AABBTree(size);//AABBTree.New(null);
+            *tree = new AABBTree(size);
             TablePtr->SetNext(entry);
         }
+
         private static void CreateMainTable(int size = 1024)
         {
             var bytes = (sizeof(int) * 3) + (size * sizeof(IntPtr));
@@ -428,18 +1647,24 @@ namespace ECS
             table->AllocatedBytes = bytes;
             TablePtr->SetNext(entry);
         }
-        private static void AddNewObject(ObjectTable* table, CObject cObject)
+
+        private static void AddNewObject(CObject cObject)
         {
-            if (table->WriteIndex >= table->MaxSize || table->Count >= table->MaxSize)
+            if (ObjectTablePtr->WriteIndex >= ObjectTablePtr->MaxSize || ObjectTablePtr->Count >= ObjectTablePtr->MaxSize)
             {
-                throw new Exception("Not enough space in table"); // change, relocate writeindex if invalid, realloc to remove dead space --- do same for all tables
+                //RecreateObjectTable(ObjectTablePtr->MaxSize * 2);
+                Debug.Breakpoint();
+                //var ptr = &table->Value0;
+                //CGC.ResizeEntireBlock((IntPtr)ptr, sizeof(CObject), table->MaxSize, table->MaxSize * 2);
+                //RecreateTree(table->MaxSize * 2, 2, true);
+                //throw new Exception("Not enough space in table"); // change, relocate writeindex if invalid, realloc to remove dead space --- do same for all tables
             }
-            table->SetNext(cObject);
+            ObjectTablePtr->SetNext(cObject);
         }
         internal static CObject AddNewObject(long index)
         {
             var obj = CObject.New(index);
-            AddNewObject(ObjectTablePtr, obj);
+            AddNewObject(obj);
             return obj;
         }
         internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
@@ -455,7 +1680,10 @@ namespace ECS
             }
             if (table->WriteIndex >= table->MaxSize || table->Count >= table->MaxSize)
             {
-                throw new Exception("Not enough space in table");
+                //throw new Exception("Not enough space in table"); // change, relocate writeindex if invalid, realloc to remove dead space --- do same for all tables
+                //RecreateDataTable<T>(table->MaxSize * 2);
+                //table = GetDataTable(GetDataTableIndexOf(type));
+                Debug.Breakpoint();
             }
             var entry = new Data
             {
@@ -463,7 +1691,7 @@ namespace ECS
                 DataType = type,
                 IsInitialised = true,
                 DataSize = sizeof(T),
-                ObjectPtr = ObjectTablePtr->GetObjectPointerAtIndex((int)cObject.Index) // check this just in case, it appears to work so far
+                ObjectIndex = (int)cObject.Index // check this just in case, it appears to work so far
             };
             entry.DataPtr = Malloc(entry.DataSize);
             MemSet(entry.DataPtr, 0, entry.DataSize);
@@ -502,9 +1730,6 @@ namespace ECS
         }
         internal struct LookupTable
         {
-            /*public int ReadIndex;
-            public int WriteIndex;
-            public int Count;*/
             public int Entries;
             public int MaxSize;
             public int AllocatedBytes;
@@ -603,7 +1828,24 @@ namespace ECS
                 }
                 return CObject.Null;
             }
-            public ByRef<T> GetRef<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
+            public ByRefObject GetRef<T>(Compare<T> comparer) where T : unmanaged
+            {
+                var index = GetDataTableIndexFromLookup<T>();
+                var table = GetDataTable(index);
+                fixed (CObject* object_ptr = &this.Value0)
+                {
+                    for (int i = 0; i < this.MaxSize; i++)
+                    {
+                        var cObject = object_ptr + i;
+                        if (cObject->HasDataOf(index) && comparer(cObject->GetData<T>()))
+                        {
+                            return new ByRefObject(cObject);
+                        }
+                    }
+                }
+                return ByRefObject.Null;
+            }
+            public ByRefData<T> GetRef<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
             {
                 var index = GetDataTableIndexFromLookup<T>();
                 var table = GetDataTable(index);
@@ -617,11 +1859,11 @@ namespace ECS
                         var cObject = object_ptr + i;
                         if (cObject->HasDataOf(index) && cObject->HasDataOf(index2) && comparer(cObject->GetData<U>()))
                         {
-                            return new ByRef<T>(cObject);
+                            return new ByRefData<T>(cObject);
                         }
                     }
                 }
-                return ByRef<T>.Null;
+                return ByRefData<T>.Null;
             }
             public T Get<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
             {
@@ -746,18 +1988,6 @@ namespace ECS
                         var cObject = object_ptr + i;
                         if (cObject->HasDataOf(index) && cObject->HasDataOf(index2))
                         {
-                            /*if (!cObject->Slot->Get(index)->IsValid || !cObject->Slot->Get(index2)->IsValid)
-                            {
-                                CObject.Destroy(*cObject);
-                                continue;
-                            }
-
-                            var data = cObject->Slot->Get(index)->ExposeData<T>();
-                            var data2 = cObject->Slot->Get(index2)->ExposeData<U>();
-                            
-                            action(ref *data,
-                                   ref *data2,
-                                   ref *cObject);*/
 
                             action(ref *cObject->Slot->Get(index)->ExposeData<T>(),
                                    ref *cObject->Slot->Get(index2)->ExposeData<U>(),
@@ -884,7 +2114,7 @@ namespace ECS
                             continue;
 
                         var other = list[i].GetDataPointer<Transform>();
-                        if (!list[i].IsDefaultNull() && transform->ExpensiveIntersection(other))
+                        if (!list[i].IsActiveNull() && transform->ExpensiveIntersection(other))
                         {
                             if(VerifiedCollisionsThisFrame.ContainsKey(cObject))
                             {
@@ -916,17 +2146,22 @@ namespace ECS
 
             //public ObjectIterator<T> GetAll<T>() where T : unmanaged => ( (ObjectTable*)table )->GetAll<T>();
             public CObject Get(string name) => Get((in CString _string) => _string.Equals(name));
+            public ByRefObject GetRef(string name) => GetRef((in CString _string) => _string.Equals(name));
             public T Get<T>(string name) where T : unmanaged => Get<T, CString>((in CString _string) => _string.Equals(name));
-            public ByRef<T> GetRef<T>(string name) where T : unmanaged => GetRef<T, CString>((in CString _string) => _string.Equals(name));
+            public ByRefData<T> GetRef<T>(string name) where T : unmanaged => GetRef<T, CString>((in CString _string) => _string.Equals(name));
             public CObject Get<T>(Compare<T> comparer) where T : unmanaged
             {
                 return ( (ObjectTable*)table )->Get(comparer);
+            }
+            public ByRefObject GetRef<T>(Compare<T> comparer) where T : unmanaged
+            {
+                return ((ObjectTable*)table)->GetRef(comparer);
             }
             public T Get<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
             {
                 return ((ObjectTable*)table)->Get<T, U>(comparer);
             }
-            public ByRef<T> GetRef<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
+            public ByRefData<T> GetRef<T, U>(Compare<U> comparer) where T : unmanaged where U : unmanaged
             {
                 return ( (ObjectTable*)table )->GetRef<T, U>(comparer);
             }
@@ -1173,8 +2408,8 @@ namespace ECS
             public int DataSize;
             public int DataIndex;
             public IntPtr DataPtr;
-            public IntPtr ObjectPtr;
-            public bool IsValid => IsInitialised && DataPtr != IntPtr.Zero && ObjectPtr != IntPtr.Zero;
+            public int ObjectIndex;
+            public bool IsValid => IsInitialised && DataPtr != IntPtr.Zero && ObjectIndex != -1;
             public T GetInternalData<T>() where T : unmanaged
             {
                 if (IsValid)
@@ -1185,14 +2420,14 @@ namespace ECS
             public void UseInternalData<T>(Ref<T> action) where T : unmanaged => action(ref *(T*)this.DataPtr);
             //public void UseInternalData<T>(RefWithIteration<T> action, int index, int max) where T : unmanaged => action(ref *(T*)this.DataPtr, index, max);
             public void UseInternalData<T>(In<T> action) where T : unmanaged => action(in *(T*)this.DataPtr);
-            public void UseInternalData<T>(RefWithObject<T, CObject> action) where T : unmanaged => action(ref *(T*)this.DataPtr, ref *(CObject*)ObjectPtr);
+            public void UseInternalData<T>(RefWithObject<T, CObject> action) where T : unmanaged => action(ref *(T*)this.DataPtr, ref *(CObject*)ObjectTablePtr->GetObjectPointerAtIndex(ObjectIndex));
 
             public void Dispose()
             {
                 if (DataType == typeof(Collider).GetHashCode())
-                    Tree->RemoveObject((CObject*)ObjectPtr);
+                    Tree->RemoveObject((CObject*)ObjectTablePtr->GetObjectPointerAtIndex(ObjectIndex));
                 // Kill link to object --- clear object's meta data cache
-                ObjectPtr = IntPtr.Zero;
+                ObjectIndex = -1;
                 // Kill link to data --- clear data's data
                 Free(DataPtr);
                 DataPtr = IntPtr.Zero;
@@ -1291,8 +2526,372 @@ namespace ECS
                     }
                 }
             }
+        }*/
+    }
+}
+namespace ECS.Library
+{
+    using static UnmanagedCSharp;
+    using static Keyboard;
+    public static class Input
+    {
+        private static readonly Current CurrentInput = new Current();
+        internal static bool GetInputBool<Args>(this Args args, Func<Args, bool> predicate) where Args : EventArgs => args != null && predicate(args);
+        internal static void SetMouseButtonPressedArgs(MouseButtonEventArgs e) => CurrentInput.MouseButtonPressed = e;
+        internal static void SetMouseButtonReleasedArgs(MouseButtonEventArgs e) => CurrentInput.MouseButtonPressed = null;
+        internal static void SetKeyPressedArgs(KeyEventArgs e) => CurrentInput.KeyPressed.Add(e);
+        internal static void SetKeyReleasedArgs(KeyEventArgs e) => CurrentInput.KeyPressed.RemoveWhere(x => x.Code == e.Code);
+        public static bool GetMouseButtonPressed(Mouse.Button mouseButton) => CurrentInput.MouseButtonPressed.GetInputBool((x) => x.Button == mouseButton);
+        public static bool GetKeyPressed(Key key) => CurrentInput.KeyPressed.Any(x => x.Code == key);
+        public static Vector2f GetMousePosition() => (Vector2f)Mouse.GetPosition(Engine.MainWindow);
+        private class Current
+        {
+            public JoystickButtonEventArgs JoystickButtonPressed = null;
+            public TouchEventArgs TouchMoved = null;
+            public TouchEventArgs TouchBegan = null;
+            public JoystickConnectEventArgs JoystickDisconnected = null;
+            public SizeEventArgs Resized = null;
+            public JoystickConnectEventArgs JoystickConnected = null;
+            public JoystickButtonEventArgs JoystickButtonReleased = null;
+            public TextEventArgs TextEntered = null;
+            public KeyEventArgs KeyReleased = null;
+            public MouseWheelScrollEventArgs MouseWheelScrolled = null;
+            public MouseButtonEventArgs MouseButtonPressed = null;
+            public JoystickMoveEventArgs JoystickMoved = null;
+            public MouseMoveEventArgs MouseMoved = null;
+            public Multi<KeyEventArgs> KeyPressed = new Multi<KeyEventArgs>();
+            public MouseButtonEventArgs MouseButtonReleased = null;
+            public SensorEventArgs SensorChanged = null;
+            public TouchEventArgs TouchEnded = null;
+        }
+        private class Multi<Args> where Args : EventArgs
+        {
+            private readonly List<Args> argsList = new List<Args>();
+
+            public void Add(Args args) => argsList.Add(args);
+            public bool Remove(Args args) => argsList.Remove(args);
+            public int RemoveWhere(Predicate<Args> predicate) => argsList.RemoveAll(predicate);
+            public void Clear() => argsList.Clear();
+            public bool Any(Func<Args, bool> predicate) => argsList.Any(predicate);
         }
     }
+    public abstract class Engine
+    {
+        public class EngineWindow : RenderWindow
+        {
+            public static Vector2u WindowDimensions => MainEngine.Settings.WindowDimensions;
+            public static Collision.AABB GetWindowBoundingBox => new Collision.AABB(0, 0, MainEngine.Settings.WindowDimensions.X, MainEngine.Settings.WindowDimensions.Y);
+            public EngineWindow(VideoMode mode, string name, uint frame_rate) : base(mode, name)
+            {
+                SetFramerateLimit(frame_rate);
+                this.Closed += OnQuit;
+                this.KeyPressed += OnKeyPress;
+                this.KeyReleased += OnKeyRelease;
+                this.MouseButtonPressed += OnMousePress;
+                this.MouseButtonReleased += OnMouseRelease;
+            }
+
+            private void OnQuit(object sender, EventArgs args)
+            {
+                this.Close();
+            }
+
+            private void OnKeyPress(object sender, KeyEventArgs args)
+            {
+                Input.SetKeyPressedArgs(args);
+            }
+
+            private void OnKeyRelease(object sender, KeyEventArgs args)
+            {
+                Input.SetKeyReleasedArgs(args);
+            }
+
+            private void OnMousePress(object sender, MouseButtonEventArgs args)
+            {
+                Input.SetMouseButtonPressedArgs(args);
+            }
+            private void OnMouseRelease(object sender, MouseButtonEventArgs args)
+            {
+                Input.SetMouseButtonReleasedArgs(args);
+            }
+        }
+
+        internal static Engine MainEngine = null;
+        internal static EngineWindow MainWindow => MainEngine?.ThisWindow;
+
+
+        internal EngineWindow ThisWindow = null;
+
+        public abstract void Initialise();
+        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false);
+        private void GameLoop() // might make "public virtual"
+        {
+            var delta = CTime.DeltaTime;
+            for (int i = 0; i < Collection.Subsystems.Count; i++)
+            {
+                var subsystem = Collection.Subsystems[i];
+                if (subsystem.IsEnabled)
+                {
+#if DEBUG_TIMINGS
+                    var time = DateTime.Now;
+                    subsystem.Update(delta);
+                    var now = DateTime.Now;
+                    Console.WriteLine(subsystem.Name + ": " + ( now - time ).TotalMilliseconds);
+#else
+                    subsystem.Update(delta);
+#endif
+                }
+            }
+            Thread.Sleep((int)( CTime.DeltaTime * 1000 ));
+        }
+        public static void Stop()
+        {
+            if (MainEngine != null)
+            {
+                MainWindow.Close();
+            }
+        }
+        public static void Start(Type engineType)
+        {
+            if (engineType.IsSubclassOf(typeof(Engine)))
+            {
+                MainEngine = (Engine)Activator.CreateInstance(engineType);
+
+                Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
+                Collection.AddNewSubsystem<RenderSubsystem>();
+                Collection.AddNewSubsystem<UISubsystem>();
+
+                if (MainEngine.Settings.EnablePhysics)
+                {
+                    Subsystem.AddNewDataType<PhysicsBody>();
+                    Collection.AddNewSubsystem<PhysicsSubsystem>();
+                }
+                if (MainEngine.Settings.EnableCollisions)
+                    Subsystem.AddNewDataType<Collider>();
+
+                MainEngine.Initialise();
+
+                bool foundCollisionSubsystem = Collection.Subsystems.Any(x => x.GetType().IsSubclassOf(typeof(CollisionSubsystem)));
+
+                if (MainEngine.Settings.EnableCollisions && !foundCollisionSubsystem)
+                    throw new Exception("Please provide implementation of collision subsystem.");
+                if (!MainEngine.Settings.EnableCollisions && foundCollisionSubsystem)
+                    throw new Exception("Cannot initialise collision subsystem if collision is disabled.");
+
+                Subsystem.SystemFlags.SetFlags();
+
+                foreach (var item in Collection.Subsystems)
+                    if (item.IsEnabled)
+                        item.Startup();
+
+                while (MainEngine.ThisWindow is null && CTime.DeltaTime == 0f)
+                    ;
+                while (MainWindow.IsOpen)
+                {
+                    MainEngine.GameLoop();
+                }
+            }
+        }
+    }
+    public struct EngineSettings
+    {
+        public int MainTableSize;
+        public int ObjectTableSize;
+        public int DataTableSize;
+        public int TextureTableSize;
+        public Vector2u WindowDimensions;
+        public string WindowName;
+        public bool EnablePhysics;
+        public bool EnableCollisions;
+        public uint DesiredFrameRate;
+        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, Vector2u window_dimensions, string name, bool enable_physics, bool enable_collisions, uint desiredFrameRate = 60)
+        {
+            MainTableSize = mSize;
+            ObjectTableSize = otSize;
+            DataTableSize = dtSize;
+            TextureTableSize = texSize;
+            WindowDimensions = window_dimensions;
+            WindowName = name;
+            EnablePhysics = enable_physics;
+            EnableCollisions = enable_collisions;
+            DesiredFrameRate = desiredFrameRate;
+        }
+    }
+    public static class Collection
+    {
+        internal static readonly List<Subsystem> Subsystems = new List<Subsystem>();
+        internal static void AddNewSubsystem<System>() where System : Subsystem
+        {
+            var type = typeof(System);
+            if (!type.IsAbstract && !Subsystems.Any(x => x.GetType() == type))
+            {
+                Subsystems.Add((Subsystem)Activator.CreateInstance(type));
+            }
+        }
+    }
+    public abstract class Subsystem
+    {
+        internal static readonly object SyncRoot = new object();
+        internal struct SubsystemFlags
+        {
+            public bool AddNewDataTypes;
+            public bool AddNewSubsystems;
+            public SubsystemFlags(bool add_data, bool add_systems)
+            {
+                AddNewDataTypes = add_data;
+                AddNewSubsystems = add_systems;
+            }
+            public void SetFlags()
+            {
+                AddNewDataTypes = false;
+                AddNewSubsystems = false;
+            }
+        }
+        internal static SubsystemFlags SystemFlags = new SubsystemFlags(true, true);
+        //public static RefObjectTable Entities => UnmanagedCSharp.Entities;
+        public static void AddNewDataType<T>() where T : unmanaged
+        {
+            if (SystemFlags.AddNewDataTypes) // throw on fail
+                LookupTable.AddNewDataType<T>();
+        }
+        public static void AddNewSubsystem<System>() where System : Subsystem
+        {
+            if (SystemFlags.AddNewSubsystems) // throw on fail
+                Collection.AddNewSubsystem<System>();
+        }
+
+        public Subsystem()
+        {
+            Name = GetType().Name;
+        }
+        public readonly string Name;
+        public bool IsEnabled { get; set; } = true;
+        public abstract void Update(float deltaSeconds);
+        public virtual void Startup() { }
+    }
+
+    public sealed class RenderSubsystem : Subsystem
+    {
+        private Thread RenderThread = null;
+        public override void Startup()
+        {
+            IsEnabled = false;
+            RenderThread = new Thread(() => specialCaseUpdate());
+            RenderThread.Start();
+        }
+        public override void Update(float deltaSeconds) { }
+        
+        internal void specialCaseUpdate()
+        {
+
+            Engine.MainEngine.ThisWindow = new Engine.EngineWindow(new VideoMode(Engine.MainEngine.Settings.WindowDimensions), Engine.MainEngine.Settings.WindowName, Engine.MainEngine.Settings.DesiredFrameRate);
+
+            while (Engine.MainWindow.IsOpen)
+            {
+                Engine.MainWindow.DispatchEvents();
+                var time = DateTime.Now;
+                lock (SyncRoot)
+                {
+                    Objects.Iterate((ref Texture texture, ref Transform transform) =>
+                    {
+                        var states = new RenderStates(transform.SFMLTransform);
+                        texture.Draw(Engine.MainWindow, states);
+                    });
+
+                    Objects.Iterate((ref UI.Text text, ref Transform transform) =>
+                    {
+                        var states = new RenderStates(transform.SFMLTransform);
+                        text.Draw(Engine.MainWindow, states);
+                    });
+                }
+                Engine.MainWindow.Display();
+                Engine.MainWindow.Clear();
+                CTime.DeltaTime = (float)( ( DateTime.Now - time ).TotalSeconds );
+#if DEBUG_TIMINGS
+                Console.WriteLine(Name + ": " + ( CTime.DeltaTime * 1000 ).ToString());
+#endif
+            }
+        }
+        
+    }
+    /*
+    public sealed class BoundarySubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Entities.Iterate((ref Transform transform) =>
+            {
+                var window = Engine.MainEngine.Settings.WindowDimensions;
+                var current_x = transform.Position.X;
+                var current_y = transform.Position.Y;
+                if (current_x < 0)
+                    current_x = 0;
+                else if (current_x > window.X)
+                    current_x = window.X;
+
+                if (current_y < 0)
+                    current_y = 0;
+                else if (current_y > window.Y)
+                    current_y = window.Y;
+
+                transform.Position = new Vector2f(current_x, current_y);
+            });
+        }
+    }
+    */
+    public class PhysicsSubsystem : Subsystem
+    {
+        private Vector2u Window = Engine.MainEngine.Settings.WindowDimensions;
+        public override void Update(float deltaSeconds)
+        {
+            Objects.Iterate((ref PhysicsBody body, ref Transform transform) =>
+            {
+                var size = transform.Size / 2;
+
+                body.Velocity += Constants.Gravity * deltaSeconds;
+
+                if (transform.Position.Y + size.Y > Window.Y || transform.Position.Y < 0)
+                {
+                    body.Velocity = new Vector2f(body.Velocity.X, -1 * body.Velocity.Y);
+                }
+
+                if (transform.Position.X + size.X > Window.X || transform.Position.X < 0)
+                {
+                    body.Velocity = new Vector2f(-1 * body.Velocity.X, body.Velocity.Y);
+                }
+
+                transform.Position += body.Velocity * deltaSeconds;
+            });
+        }
+    }
+
+    public abstract class CollisionSubsystem : Subsystem
+    {
+        public virtual bool VerifyCollisions { get; protected set; } = false;
+        public static Dictionary<CObject, List<CObject>> GetPossibleCollisions => Objects.PossibleCollisionsThisFrame;
+        public static Dictionary<CObject, List<CObject>> GetVerifiedCollisions => Objects.VerifiedCollisionsThisFrame;
+        public override void Update(float deltaSeconds)
+        {
+            Objects.PossibleCollisionQuery();
+            if(VerifyCollisions)
+            {
+                Objects.VerifyCollisions(Engine.MainEngine.Settings.EnablePhysics);
+            }
+        }
+    }
+
+    public class UISubsystem : Subsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Objects.Iterate((ref Button button, ref Transform transform) =>
+            {
+                if (Input.GetMouseButtonPressed(0) && transform.BoundingBox.Contains(Input.GetMousePosition()))
+                    button.Click();
+            });
+        }
+    }
+
 }
 namespace ECS.Strings
 {
@@ -1346,8 +2945,46 @@ namespace ECS.Graphics
 {
     using static RenderWindow;
     using static UnmanagedCSharp;
+    using static Maths.RNG;
+    public enum Anchor
+    {
+        TOP_LEFT = 0,
+        TOP_RIGHT = 1,
+        BOTTOM_LEFT = 2,
+        BOTTOM_RIGHT = 3,
+    }
+    public static class GraphicsExtensions
+    {
+        public static Vector2f GetAbsoluteFromAnchor(this Anchor anchor)
+        {
+            var windowDimensions = Library.Engine.MainEngine.Settings.WindowDimensions;
+            return anchor switch
+            {
+                Anchor.TOP_LEFT => new Vector2f(),
+                Anchor.TOP_RIGHT => new Vector2f(windowDimensions.X, 0),
+                Anchor.BOTTOM_LEFT => new Vector2f(0, windowDimensions.Y),
+                Anchor.BOTTOM_RIGHT => new Vector2f(windowDimensions.X, windowDimensions.Y),
+                _ => throw new Exception("Invalid Anchor."),
+            };
+        }
+        public static Vector2f GetRelativePositionToAnchor(this Anchor anchor, Vector2f position)
+        {
+            return anchor.GetAbsoluteFromAnchor() + position;
+        }
+    }
     public struct Transform : IComponentData
     {
+        public Anchor Anchor
+        {
+            get
+            {
+                return myAnchor;
+            }
+            set
+            {
+                myAnchor = value;
+            }
+        }
         public Vector2u Size
         {
             get
@@ -1366,7 +3003,9 @@ namespace ECS.Graphics
         {
             get
             {
-                return myPosition;
+                if (Anchor == Anchor.TOP_LEFT)
+                    return myPosition;
+                return GetAnchoredPosition();
             }
             set
             {
@@ -1429,8 +3068,8 @@ namespace ECS.Graphics
                     float syc = myScale.Y * cosine;
                     float sxs = myScale.X * sine;
                     float sys = myScale.Y * sine;
-                    float tx = -myOrigin.X * sxc - myOrigin.Y * sys + myPosition.X;
-                    float ty = myOrigin.X * sxs - myOrigin.Y * syc + myPosition.Y;
+                    float tx = -myOrigin.X * sxc - myOrigin.Y * sys + Position.X;
+                    float ty = myOrigin.X * sxs - myOrigin.Y * syc + Position.Y;
 
                     myTransform = new SFMLTransform(sxc, sys, tx,
                                                 -sxs, syc, ty,
@@ -1463,14 +3102,19 @@ namespace ECS.Graphics
         {
             return GetGlobalBounds().Intersects(other.GetGlobalBounds());
         }
+        public Vector2f GetAnchoredPosition()
+        {
+            return myAnchor.GetRelativePositionToAnchor(myPosition);
+        }
         internal unsafe bool ExpensiveIntersection(Transform* other)
         {
             return GetGlobalBounds().Intersects(other->GetGlobalBounds());
         }
-        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation) { }
-        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), 0) { }
-        public Transform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(height, width) / 2, 0) { }
-        public Transform(Vector2f position, Vector2u size, Vector2f origin, float rotation)
+        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation, Anchor anchor) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, anchor) { }
+        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, Anchor.TOP_LEFT) { }
+        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), 0, Anchor.TOP_LEFT) { }
+        public Transform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(height, width) / 2, 0, Anchor.TOP_LEFT) { }
+        public Transform(Vector2f position, Vector2u size, Vector2f origin, float rotation, Anchor anchor)
         {
             mySize = size;
             //myBounds = new FloatRect(new Vector2f(), (Vector2f)size);
@@ -1482,12 +3126,9 @@ namespace ECS.Graphics
             myInverseNeedUpdate = true;
             myTransform = default;
             myInverseTransform = default;
+            myAnchor = anchor;
         }
-        //public FloatRect GetGlobalBounds() => SFMLTransform.TransformRect(myBounds);
-        //public FloatRect GetLocalBounds() => myBounds;
-        //private FloatRect myBounds;
-
-        public AABB BoundingBox => new AABB(myPosition.X - myOrigin.X, myPosition.Y - myOrigin.Y, myPosition.X + mySize.X - myOrigin.X, myPosition.Y + mySize.Y - myOrigin.Y);
+        public AABB BoundingBox => new AABB(Position.X - myOrigin.X, Position.Y - myOrigin.Y, Position.X + mySize.X - myOrigin.X, Position.Y + mySize.Y - myOrigin.Y);
         private Vector2u mySize;
         private Vector2f myOrigin;// = new Vector2f(0, 0);
         private Vector2f myPosition;// = new Vector2f(0, 0);
@@ -1497,6 +3138,7 @@ namespace ECS.Graphics
         private SFMLTransform myInverseTransform;
         private bool myTransformNeedUpdate;// = true;
         private bool myInverseNeedUpdate;// = true;
+        private Anchor myAnchor;
     }
     public unsafe struct Texture : Drawable, IComponentData
     {
@@ -1510,7 +3152,7 @@ namespace ECS.Graphics
         }
         public Texture(string filename)
         {
-            TexturePtr = TryAddTexture(filename);
+            TexturePtr = Textures.TryAddTexture(filename);
             Vertices = new Vertex4();
             ShouldDraw = true;
             UpdateTexture(TexturePtr);
@@ -1547,10 +3189,9 @@ namespace ECS.Graphics
             texture.ShouldDraw = other.Overlaps(_this);
             return texture;
         }
-        private static readonly Random rnd = new Random();
         public void RandomiseColor()
         {
-            var color = new Color((byte)rnd.Next(0, 255), (byte)rnd.Next(0, 255), (byte)rnd.Next(0, 255));
+            var color = new Color((byte)Next(0, 255), (byte)Next(0, 255), (byte)Next(0, 255));
             SetColor(color);
         }
         public void SetColor(Color color)
@@ -1586,6 +3227,12 @@ namespace ECS.Maths
     public static class Constants
     {
         public static readonly Vector2f Gravity = new Vector2f(0, 9.80665f);
+    }
+
+    public static class RNG
+    {
+        private static readonly Random Random = new Random();
+        public static int Next(int min, int max) => Random.Next(min, max);
     }
 
     public static class Maths
@@ -1630,6 +3277,7 @@ namespace ECS.Maths
 
         public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
+        public static float Clamp(float value, float min, float max) => value < min ? min : value > max ? max : value;
     }
 
 }
@@ -1640,6 +3288,7 @@ namespace ECS.Collections
     {
         public struct LocalArray<T> : IDisposable where T : unmanaged
         {
+            private int sizeOf;
             public int Entries;
             public int MaxSize;
             public int AllocatedBytes;
@@ -1648,7 +3297,8 @@ namespace ECS.Collections
             {
                 Entries = 0;
                 MaxSize = size;
-                AllocatedBytes = ( sizeof(T) * size );
+                sizeOf = sizeof(T);
+                AllocatedBytes = sizeOf * size;
                 Items = Malloc(AllocatedBytes);
                 MemSet(Items, 0, AllocatedBytes);
             }
@@ -1709,9 +3359,9 @@ namespace ECS.Collections
             }
             public void Resize(int size)
             {
-                Items = CGC.ResizeEntireBlock(Items, sizeof(T), size);
+                Items = CGC.ResizeEntireBlock(Items, sizeOf, MaxSize, size);
                 MaxSize = size;
-                AllocatedBytes = sizeof(T) * size;
+                AllocatedBytes = sizeOf * size;
             }
             public void Clear()
             {
@@ -1913,18 +3563,6 @@ namespace ECS.Collision
         private int nodeCapacity;
         private int growthSize;
         public int transformDataTableIndex;
-
-        public static AABBTree New(AABBTree* original)
-        {
-            var size = 1;
-            if (original != null)
-            {
-                size = original->nodes.MaxSize;
-                original->Dispose();
-            }
-            return new AABBTree(size);
-        }
-
         public AABBTree(int start_size)
         {
             rootNodeIndex = AABBNode.NULL_NODE;
@@ -1945,6 +3583,7 @@ namespace ECS.Collision
         }
         private int allocateNode()
         {
+            
             if (nextFreeNodeIndex == AABBNode.NULL_NODE)
             {
                 //assert(_allocatedNodeCount == _nodeCapacity);
@@ -1961,6 +3600,7 @@ namespace ECS.Collision
                 nodes.ReadPointerAt(nodeCapacity - 1)->NextNodeIndex = AABBNode.NULL_NODE;
                 nextFreeNodeIndex = allocatedNodeCount;
             }
+            
 
             int nodeIndex = nextFreeNodeIndex;
             AABBNode* allocatedNode = nodes.ReadPointerAt(nodeIndex);
@@ -2102,6 +3742,8 @@ namespace ECS.Collision
             }
 
             AABBNode* leafNode = nodes.ReadPointerAt(leafNodeIndex);
+            if(leafNode->ParentNodeIndex == int.MaxValue) // fail safe
+                return;
             int parentNodeIndex = leafNode->ParentNodeIndex;
             AABBNode* parentNode = nodes.ReadPointerAt(parentNodeIndex);
             int grandParentNodeIndex = parentNode->ParentNodeIndex;
@@ -2174,11 +3816,15 @@ namespace ECS.Collision
             int nodeIndex = allocateNode();
             AABBNode* node = nodes.ReadPointerAt(nodeIndex);
 
-            node->AssociatedAABB = cObject->Slot->Get(transformDataTableIndex)->ExposeData<Transform>()->BoundingBox;//cObject->GetDataPointer<Transform>()->BoundingBox;
+            node->AssociatedAABB = cObject->Meta->Get<Transform>(transformDataTableIndex)->BoundingBox;//cObject->GetDataPointer<Transform>()->BoundingBox;
             node->ObjectPointer = cObject;
 
             insertLeaf(nodeIndex);
             map[cObject->ID] = nodeIndex;
+
+            //Console.WriteLine(nodeIndex);
+            //Console.WriteLine(cObject->ID);
+            //Console.WriteLine(map[cObject->ID]);
         }
         public void RemoveObject(CObject* cObject)
         {
@@ -2191,14 +3837,14 @@ namespace ECS.Collision
         public void UpdateObject(CObject* cObject)
         {
             int nodeIndex = map[cObject->ID];
-            updateLeaf(nodeIndex, cObject->Slot->Get(transformDataTableIndex)->ExposeData<Transform>()->BoundingBox);
+            updateLeaf(nodeIndex, cObject->Meta->Get<Transform>(transformDataTableIndex)->BoundingBox);
         }
 
         public List<CObject> QueryOverlaps(CObject cObject)
         {
             List<CObject> overlaps = new List<CObject>();
             Stack<int> stack = new Stack<int>();
-            AABB testAabb = cObject.Slot->Get(transformDataTableIndex)->ExposeData<Transform>()->BoundingBox;
+            AABB testAabb = cObject.Meta->Get<Transform>(transformDataTableIndex)->BoundingBox;
             stack.Push(rootNodeIndex);
             while (stack.Count != 0)
             {
@@ -2231,6 +3877,14 @@ namespace ECS.Collision
 
         public void Dispose()
         {
+            for(int i = 0; i < nodes.MaxSize; i++)
+            {
+                if(nodes[i].ObjectPointer != null && !nodes[i].ObjectPointer->IsActiveNull())
+                {
+                    Collider* collider = nodes[i].ObjectPointer->GetDataPointer<Collider>();
+                    collider->IsInTree = false;
+                }
+            }
             map.Dispose();
             nodes.Dispose();
         }
@@ -2405,19 +4059,21 @@ namespace ECS.Animations
 namespace ECS.GarbageCollection
 {
     using static CAllocation;
+    using static UnmanagedCSharp;
     /// <summary>
     /// C Garbage Collection
     /// </summary>
-    public static class CGC
+    public unsafe static class CGC
     {
-        public static IntPtr ResizeEntireBlock(IntPtr block, int size_of, int new_size)
+        public static IntPtr ResizeEntireBlock(IntPtr block, int size_of, int original_size, int new_size)
         {
             var new_block = Malloc(size_of * new_size);
             MemSet(new_block, 0, size_of * new_size);
-            MemMove(new_block, block, size_of * new_size);
+            MemMove(new_block, block, size_of * original_size);
             Free(block);
             return new_block;
         }
         // erase large blocks of dead space in table --- later optimisation
+
     }
 }

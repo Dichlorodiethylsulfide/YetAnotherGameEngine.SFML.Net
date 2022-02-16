@@ -1,4 +1,4 @@
-#pragma warning disable IDE0022, IDE0009
+/*#pragma warning disable IDE0022, IDE0009
 
 using ECS; // Main namespace
 using ECS.Graphics; // Includes textures and transforms
@@ -18,6 +18,7 @@ using SFML.Graphics;
 using SFML.Window;
 
 using System.Diagnostics.CodeAnalysis;
+
 
 namespace ECS.Library
 {
@@ -111,7 +112,6 @@ namespace ECS.Library
 
         internal EngineWindow ThisWindow = null;
 
-        public static readonly Random Random = new Random();
         public abstract void Initialise();
         public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false, false);
         private void GameLoop() // might make "public virtual"
@@ -434,3 +434,4 @@ namespace ECS.Library
     #endregion Other Subsystems
 
 }
+*/
