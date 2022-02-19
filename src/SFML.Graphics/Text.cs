@@ -14,7 +14,7 @@ namespace SFML.Graphics
     /// See also the note on coordinates and undistorted rendering in SFML.Graphics.Transformable.
     /// </remarks>
     ////////////////////////////////////////////////////////////
-    public class Text : Transformable, Drawable
+    public class SFMLText : Transformable, Drawable
     {
         ////////////////////////////////////////////////////////////
         /// <summary>
@@ -45,7 +45,7 @@ namespace SFML.Graphics
         /// Default constructor
         /// </summary>
         ////////////////////////////////////////////////////////////
-        public Text() :
+        public SFMLText() :
             this("", null)
         {
         }
@@ -57,7 +57,7 @@ namespace SFML.Graphics
         /// <param name="str">String to display</param>
         /// <param name="font">Font to use</param>
         ////////////////////////////////////////////////////////////
-        public Text(string str, Font font) :
+        public SFMLText(string str, Font font) :
             this(str, font, 30)
         {
         }
@@ -70,7 +70,7 @@ namespace SFML.Graphics
         /// <param name="font">Font to use</param>
         /// <param name="characterSize">Base characters size</param>
         ////////////////////////////////////////////////////////////
-        public Text(string str, Font font, uint characterSize) :
+        public SFMLText(string str, Font font, uint characterSize) :
             base(sfText_create())
         {
             DisplayedString = str;
@@ -84,7 +84,7 @@ namespace SFML.Graphics
         /// </summary>
         /// <param name="copy">Text to copy</param>
         ////////////////////////////////////////////////////////////
-        public Text(Text copy) :
+        public SFMLText(SFMLText copy) :
             base(sfText_copy(copy.CPointer))
         {
             Origin = copy.Origin;
