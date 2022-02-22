@@ -8,6 +8,7 @@
 #undef PHYSICS_TEST
 
 using ECS;
+using ECS.Animations;
 using ECS.Strings;
 using ECS.Graphics;
 using ECS.Library;
@@ -44,24 +45,37 @@ namespace Game_Example
         private const string Bullet = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Bullet.png";
         private const string ExitButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\ExitButton.png";
         private const string StartButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\StartButton.png";
-        private const string Placeholder = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Placeholder Block 2.png";
+        //private const string Placeholder = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Placeholder Block 2.png";
+        //private const string Placeholder = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Placeholder Block 3.png";
+        private const string SpriteSheet = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Block_SpriteSheet.png";
 
+        public static Texture SpriteSheetTexture;
         public static Texture StartTexture;
         public static Texture ExitTexture;
         public static Texture SpawnTexture;
         public static Texture BulletTexture;
+        public static Animation SquareAnimation;
         public static ECS.UI.Font Arial;
-        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, true, 60);
+
+#if !GAME_TEST
+        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, false, false, 60);
+#else
+        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, true, true, 60);
+#endif
         public override void Initialise()
         {
+            SpriteSheetTexture = Texture.CreateSpriteSheet(SpriteSheet, new Vector2u(32, 32));
             StartTexture = new Texture(StartButton);
             ExitTexture = new Texture(ExitButton);
-            SpawnTexture = new Texture(Placeholder);
+            SpawnTexture = SpriteSheetTexture.GetSpriteFromSheet(0);
             BulletTexture = new Texture(Bullet);
             Arial = new ECS.UI.Font(ArialFont);
-
+            SquareAnimation = new Animation(5);
+            for (int i = 0; i < 5; i++)
+                SquareAnimation.SetAnimationFrameTo(i, SpriteSheetTexture);
 #if GAME_TEST
             AddNewSubsystem<NewCollisionSubsystem>();
+            AddNewSubsystem<NewAnimationSubsystem>();
             AddNewSubsystem<PlayerSubsystem>();
             AddNewSubsystem<EnemySubsystem>();
             AddNewDataType<PlayerData>();
@@ -72,7 +86,7 @@ namespace Game_Example
 #endif
             var startButton = CObject.New();
             startButton.AddData(StartTexture);
-            startButton.AddData(new Transform(EngineWindow.WindowDimensions.X / 2, EngineWindow.WindowDimensions.Y / 2, 128, 64, 0, 0, 0, Anchor.TOP_LEFT));
+            startButton.AddData(new Transform(0, 0, 128, 64, 0, 0, 0, Anchor.CENTRE));
             startButton.AddData(new CString("StartButton"));
             startButton.AddData(new Button(() => StartDemo()));
 
@@ -84,9 +98,8 @@ namespace Game_Example
         }
         public void StartDemo()
         {
-#if GAME_TEST
             CObject.Destroy(Objects.Get("StartButton"));
-
+#if GAME_TEST
             var fpsCounter = CObject.New();
             fpsCounter.AddData(new Text("FPS: ", Arial, 20));
             fpsCounter.AddData(new Transform(0, 60, 0, 0, 0, 0));
@@ -112,6 +125,8 @@ namespace Game_Example
             player.AddData(new Transform(100, 100, 32, 32));
             player.AddData(new PlayerData(100, 100, 1f));
             player.AddData(new Collider());
+            player.AddData(SquareAnimation);
+
 #if PHYSICS_TEST
             player.AddData(new PhysicsBody());
 #endif
@@ -144,14 +159,35 @@ namespace Game_Example
     {
         public override void Update(float deltaSeconds)
         {
-            UnmanagedCSharp.Objects.Iterate((ref Transform transform) =>
+            Objects.Iterate((ref Transform transform) =>
             {
                 transform.Position += new Vector2f(1, 1);
-            });
+            }, true);
         }
     }
 #endif
-    
+    internal class NewAnimationSubsystem : AnimationSubsystem
+    {
+        public override void Update(float deltaSeconds)
+        {
+            Objects.Iterate((ref PlayerData player, ref Animation animation, ref Texture texture) =>
+            {
+                var increment = (int)( player.TotalHealth / animation.FrameCount );
+                var position = (int)Math.Abs(( player.Health / increment ) - animation.FrameCount);
+                position = position == animation.FrameCount ? position - 1 : position;
+                animation.SetAnimationFrameOf(position, ref texture);
+            });
+
+            Objects.Iterate((ref EnemyData enemy, ref Animation animation, ref Texture texture) =>
+            {
+                var increment = (int)( enemy.TotalHealth / animation.FrameCount );
+                var position = (int)Math.Abs(( enemy.Health / increment ) - animation.FrameCount);
+                position = position == animation.FrameCount ? position - 1 : position;
+                animation.SetAnimationFrameOf(position, ref texture);
+            }, true);
+        }
+    }
+
     internal class PlayerSubsystem : Subsystem
     {
         public CObject PlayerObject;
@@ -224,7 +260,6 @@ namespace Game_Example
                 text.ChangeText("Health: " + PlayerObject.GetData<PlayerData>().Health);
             });
 
-
             Objects.IterateWithObject((ref BulletData bullet, ref Transform transform, ref CObject cObject) =>
             {
                 transform.Position += bullet.Direction * bullet.Speed * deltaSeconds;
@@ -234,18 +269,19 @@ namespace Game_Example
                     CObject.Destroy(cObject);
                 }
             });
-#endif
+
             FPS.VolatileWrite((ref Text text) =>
             {
                 text.ChangeText("FPS: " + Math.Floor(CTime.FPS));
             });
+#endif
         }
     }
     internal class EnemySubsystem : Subsystem
     {
         public static int EnemyLimit = 250;
         public static int EnemyCount = 0;
-        private int spawnAmount = 1;
+        private int spawnAmount = 500;
         private float spawnTimer = 1f;
         public override void Update(float deltaSeconds)
         {
@@ -279,12 +315,13 @@ namespace Game_Example
                 var enemy = CObject.New();
                 enemy.AddData(GameEngine.SpawnTexture.SetModifiedTextureColor(Color.Red));
                 enemy.AddData(new Transform(RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.X), RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.Y), 32, 32));
-                enemy.AddData(new EnemyData(10, 0, 100));
+                enemy.AddData(new EnemyData(10, 1, 100));
 #if PHYSICS_TEST
                 enemy.AddData(new PhysicsBody());
 #endif
                 enemy.AddData(new Collider());
                 enemy.AddData(new CString("Enemy"));
+                enemy.AddData(GameEngine.SquareAnimation);
             }
         }
     }
@@ -368,11 +405,13 @@ namespace Game_Example
     internal struct PlayerData : IComponentData
     {
         public int KillCount;
+        public int TotalHealth;
         public int Health;
         public float Speed;
         public float AttackSpeed;
         public PlayerData(int health, float speed, float attackSpeed)
         {
+            TotalHealth = health;
             Health = health;
             Speed = speed;
             KillCount = 0;
@@ -381,6 +420,7 @@ namespace Game_Example
     }
     internal struct EnemyData : IComponentData
     {
+        public int TotalHealth;
         public int Health;
         public int Damage;
         public float Speed;
@@ -388,6 +428,7 @@ namespace Game_Example
         public float AttackCooldown;
         public EnemyData(int health, int dmg, float speed = 10, float attackSpeed = 1f)
         {
+            TotalHealth = health;
             Health = health;
             Damage = dmg;
             Speed = speed;

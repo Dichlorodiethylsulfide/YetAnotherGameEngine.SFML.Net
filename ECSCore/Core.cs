@@ -1,9 +1,8 @@
-#define DEBUG_TIMINGS
-//#undef DEBUG_TIMINGS
 #define SEPARATE_RENDER_THREAD
 //#undef SEPARATE_RENDER_THREAD
 
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Reflection;
@@ -19,6 +18,8 @@ using SFML.Graphics;
 using SFML.System;
 
 using ECS.Collections;
+using ECS.Animations;
+using ECS.Logger;
 using ECS.Collision;
 using ECS.Graphics;
 using ECS.Physics;
@@ -123,20 +124,6 @@ namespace ECS
                 throw new IncompatibleTypeException(typeof(T).Name, typeof(IComponentData).Name);
             ptr = cObject->GetDataPointer<T>();
         }
-        /*
-        private bool CheckValidity() => objectPtr != null && !objectPtr->IsNull() && ptr != null;
-        public T VolatileRead()
-        {
-            if(CheckValidity())
-                return *ptr;
-            return default;
-        }
-        public void VolatileWrite(Ref<T> action)
-        {
-            if(CheckValidity())
-                action(ref *ptr);
-        }
-        */
         public T VolatileRead() => *ptr;
         public void VolatileWrite(Ref<T> action) => action(ref *ptr);
     }
@@ -153,98 +140,15 @@ namespace ECS
         public CObject VolatileRead() => *ptr;
         public void VolatileWrite<T>(Ref<T> action) where T : unmanaged => action(ref *ptr->GetDataPointer<T>());
     }
-    /*
-    internal struct SafePtr
-    {
-        public int hashCode;
-        private IntPtr internalPtr;
-
-        public unsafe static explicit operator CObject*(SafePtr ptr)
-        {
-            if(((CObject*)ptr.internalPtr)->GetHashCode() == ptr.hashCode)
-                return (CObject*)ptr.internalPtr;
-            return null;
-        }
-        public unsafe SafePtr(CObject* ptr)
-        {
-            internalPtr = (IntPtr)ptr;
-            hashCode = ptr->GetHashCode();
-        }
-    }
-    public unsafe struct ObjectIterator<T> where T : unmanaged
-    {
-        private int currentIndex;
-        private int size;
-        private IntPtr Items;
-
-        internal ObjectIterator(int maxSize)
-        {
-            size = maxSize;
-            currentIndex = 0;
-            Items = Malloc(sizeof(SafePtr) * maxSize);
-            MemSet(Items, 0, sizeof(SafePtr) * maxSize);
-        }
-        internal void Add(CObject* ptr)
-        {
-            fixed(IntPtr* p = &Items)
-            {
-                *(((SafePtr*)*p) + currentIndex++) = new SafePtr(ptr);
-            }
-        }
-        public void Reset()
-        {
-            currentIndex = -1;
-        }
-        public void Do(Ref<T> action)
-        {
-            fixed(IntPtr* p = &Items)
-            {
-                while (++currentIndex < size)
-                {
-                    ( (CObject*)*( ( (SafePtr*)*p ) + currentIndex) )->WriteData(action);
-                }
-            }
-            Reset();
-        }
-    }
-    public ObjectIterator<T> GetAll<T>() where T : unmanaged
-    {
-        var index = GetDataTableIndexFromLookup<T>();
-        var table = GetDataTable(index);
-        var counter = 0;
-        var iterator = new ObjectIterator<T>(table->Entries);
-        fixed(CObject * object_ptr = &this.Value0)
-        {
-            for (int i = 0; i < this.MaxSize; i++)
-            {
-                var cObject = object_ptr + i;
-                if (cObject->HasDataOf(index))
-                {
-                    iterator.Add(cObject);
-                    counter++;
-                }
-                else if (counter >= table->Entries)//(i > this.Entries)
-                {
-                    // Debug: Dead space detected, does not guarantee the dead space is indicative of the end of the table, could be a blank entry --- needs additional checking
-                    break;
-                }
-            }
-        }
-        //iterator.Resize();
-        iterator.Reset();
-        return iterator;
-    }
-    */
     public struct CObject : IEquatable<CObject>, IDisposable
     {
         private static long incrementer = 1;
         public static readonly CObject Null = new CObject();
 
         internal long Index;
-        internal bool NotDead; // Inverted so a null object will report as "Not NotDead" and so IsDefaultNull will report true
+        internal bool IsAlive;
 
         internal IntPtr MetaPtr;
-        //internal unsafe MetaSlot* Slot => (MetaSlot*)MetaPtr;
         internal unsafe MetaData* Meta
         {
             get
@@ -344,7 +248,7 @@ namespace ECS
         /// Used to avoid AccessViolation and NullReference Exceptions
         /// </summary>
         /// <returns>False if object can be used, so !IsActiveNull() is the correct existence check, otherwise True</returns>
-        public unsafe bool IsActiveNull() => !NotDead || this.ID <= 0 || MetaPtr == IntPtr.Zero || Meta->MaxSize == 0;
+        public unsafe bool IsActiveNull() => !IsAlive || this.ID <= 0 || MetaPtr == IntPtr.Zero || Meta->MaxSize == 0;
         public override int GetHashCode() => (int)this.ID;
         public bool Equals(CObject other) => this.ID == other.ID;
         public void Dispose()
@@ -362,7 +266,7 @@ namespace ECS
             MetaPtr = IntPtr.Zero;
             ID = 0;
             Index = -1;
-            NotDead = false;
+            IsAlive = false;
         }
         public static void Destroy(ref CObject obj)
         {
@@ -373,11 +277,11 @@ namespace ECS
         {
             unsafe
             {
-                //lock(Subsystem.SyncRoot)
-                //{
+                lock(Subsystem.SyncRoot)
+                {
                     Objects.RemoveObjectAtIndex((int)obj.Index);
                     obj.InternalDispose();
-                //}
+                }
             }
         }
         internal static CObject New(long index)
@@ -387,8 +291,7 @@ namespace ECS
                 ID = index,
                 Index = index - 1,
                 MetaPtr = MetaData.New(),
-                NotDead = true
-                //MetaPtr = MetaCObject.New(),
+                IsAlive = true
             };
             return obj;
         }
@@ -430,7 +333,7 @@ namespace ECS
             LookupTable.AddNewDataType<Transform>();
             LookupTable.AddNewDataType<CString>();
             LookupTable.AddNewDataType<Button>();
-            LookupTable.AddNewDataType<UI.Text>();
+            LookupTable.AddNewDataType<Text>();
             Tree->transformDataTableIndex = LookupTable.GetDataTableIndex<Transform>();
             
         }
@@ -553,6 +456,57 @@ namespace ECS
         public delegate void In<T0>(in T0 data0);
         public delegate bool Compare<T0>(in T0 data);
 
+        internal struct ParallelHookIterator<T> where T : unmanaged
+        {
+            private Hook* internalHook;
+            private int currentIndex;
+            private int totalReturned;
+            public int expectedLimit;
+            private bool limitReached;
+            private Predicate<T> predicateCheck;
+            private LinkableTable* currentTable;
+            public void Start(Action<T> onFindNext)
+            {
+                var _this = this;
+                while(_this.currentTable != null && !_this.limitReached)
+                {
+                    Parallel.For(0, internalHook->TableSize, x =>
+                    {
+                        if (_this.limitReached)
+                            return;
+
+                        if (_this.currentTable->TryGetRef(new T(), x, out var next) && _this.predicateCheck(*next))
+                        {
+                            Interlocked.Increment(ref _this.totalReturned);
+                            if (_this.totalReturned >= _this.expectedLimit)
+                                _this.limitReached = true;
+                            onFindNext(*next);
+                        }
+                    });
+                    _this.currentTable = _this.currentTable->Next;
+                }
+            }
+            public void Reset()
+            {
+                currentTable = internalHook->Start;
+                currentIndex = 0;
+                totalReturned = 0;
+                limitReached = expectedLimit > 0 ? false : true;
+            }
+
+            public static ParallelHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
+            {
+                var iterator = new ParallelHookIterator<CObject>();
+                iterator.internalHook = ObjectTablePtr;
+                iterator.currentTable = iterator.internalHook->Start;
+                iterator.currentIndex = 0;
+                iterator.totalReturned = 0;
+                iterator.expectedLimit = expectedLimit;
+                iterator.limitReached = expectedLimit > 0 ? false : true;
+                iterator.predicateCheck = check;
+                return iterator;
+            }
+        }
         internal struct HookIterator<T> where T : unmanaged
         {
             private Hook* internalHook;
@@ -913,29 +867,185 @@ namespace ECS
                 return table;
             }
         }
+        /*
+        internal struct SpriteInfo
+        {
+            public bool IsSpriteSheet;
+            public int SpriteCount;
+            public int SpriteIndex;
+            public Vector2u SpriteSize;
+            public Vector2u IndividualSpriteSize;
+            public IntRect TextureRect;
+            public static SpriteInfo NormalSprite(Vector2u spriteSize)
+            {
+                var info = new SpriteInfo()
+                {
+                    IsSpriteSheet = false,
+                    SpriteCount = 0,
+                    SpriteIndex = 0,
+                    SpriteSize = spriteSize,
+                    TextureRect = new IntRect(0, 0, (int)spriteSize.X, (int)spriteSize.Y),
+                };
+                return info;
+            }
+            public static SpriteInfo SpriteSheet(Vector2u totalSheetSize, Vector2u spriteSize)
+            {
+                var info = new SpriteInfo()
+                {
+                    IsSpriteSheet = true,
+                    SpriteCount = (int)Math.Max(totalSheetSize.X / spriteSize.X, totalSheetSize.Y / spriteSize.Y), // check this
+                    SpriteIndex = -1,
+                    SpriteSize = totalSheetSize,
+                    IndividualSpriteSize = spriteSize,
+                    TextureRect = new IntRect(0, 0, (int)totalSheetSize.X, (int)totalSheetSize.Y),
+                };
+                return info;
+            }
+            public static SpriteInfo SpriteFromSheet(int index, Vector2u spriteSize)
+            {
+                var info = new SpriteInfo()
+                {
+                    IsSpriteSheet = false,
+                    SpriteCount = -1,
+                    SpriteIndex = index,
+                    SpriteSize = spriteSize,
+                    TextureRect = new IntRect(index * (int)spriteSize.X, 0, (int)spriteSize.X, (int)spriteSize.Y),
+                };
+                return info;
+            }
+        }
+        */
+        internal struct SpriteSheetInfo
+        {
+            private struct IntRectIndex
+            {
+                public int Index;
+                public IntRect Rect;
+            }
+            public int SpriteCount;
+            public Vector2u TotalSize;
+            public Vector2u IndividualSpriteSize;
+            public IntPtr IntRects;
+            public SpriteSheetInfo(int count, Vector2u total, Vector2u individual)
+            {
+                SpriteCount = count;
+                TotalSize = total;
+                IndividualSpriteSize = individual;
+                IntRects = Malloc(count * sizeof(IntRectIndex));
+                MemSet(IntRects, 0, count * sizeof(IntRectIndex));
+                fixed (IntPtr* ptr = &IntRects)
+                {
+                    var int_rect = (IntRectIndex*)*ptr;
+                    for(int i = 0; i < count; i++)
+                    {
+                        var index = int_rect + i;
+                        index->Index = i;
+                        index->Rect = new IntRect(i * (int)individual.X, 0, (int)individual.X, (int)individual.Y);
+                    }
+                }
+            }
+            public IntRect GetTextureRectAtIndex(int index)
+            {
+                if (index < 0 || index >= SpriteCount)
+                    throw new IndexInvalidException("a sprite sheet", index, 0, SpriteCount);
+                fixed (IntPtr* ptr = &IntRects)
+                {
+                    return ( ( (IntRectIndex*)*ptr ) + index )->Rect;
+                }
+            }
+        }
         internal struct TextureEntry : IDisposable
         {
             public static readonly TextureEntry Null = new TextureEntry();
             public int HashCode;
-            public IntRect TextureRect;
+            public SpriteSheetInfo SheetInfo;
             public IntPtr TexturePtr;
-            public Vector2u GetSize() => SFMLTexture.sfTexture_getSize(TexturePtr);
+            private Vector2u GetSizeDirectly() => SFMLTexture.sfTexture_getSize(TexturePtr);
             public void Dispose()
             {
                 Free(TexturePtr);
             }
-            public static TextureEntry New(string filename)
+            private static TextureEntry GetSprite(string filename)
             {
                 var rect = new IntRect();
-                var entry = new TextureEntry
+                var entry = new TextureEntry()
                 {
+                    HashCode = filename.GetHashCode(),
                     TexturePtr = SFMLTexture.sfTexture_createFromFile(filename, ref rect),
-                    TextureRect = rect,
-                    HashCode = filename.GetHashCode()
                 };
+                entry.SheetInfo = new SpriteSheetInfo();
+                return entry;
+            }
+            public static TextureEntry NewSprite(string filename)
+            {
+                var entry = GetSprite(filename);
+                var size = entry.GetSizeDirectly();
+                entry.SheetInfo = new SpriteSheetInfo(1, size, size);
+                return entry;
+            }
+            public static TextureEntry NewSpriteSheet_CalcCount(string filename, Vector2u spriteSize)
+            {
+                var entry = GetSprite(filename);
+                var size = entry.GetSizeDirectly();
+                var count = (int)( ( size.X / spriteSize.X ) / ( size.Y / spriteSize.Y ) );
+                entry.SheetInfo = new SpriteSheetInfo(count, size, spriteSize);
+                return entry;
+            }
+            public static TextureEntry NewSpriteSheet(string filename, int count, Vector2u spriteSize)
+            {
+                var entry = GetSprite(filename);
+                entry.SheetInfo = new SpriteSheetInfo(count, entry.GetSizeDirectly(), spriteSize);
                 return entry;
             }
         }
+        /*
+        
+        internal struct TextureEntry : IDisposable
+        {
+            public static readonly TextureEntry Null = new TextureEntry();
+            public int HashCode;
+            public SpriteInfo Info;
+            public IntPtr TexturePtr;
+            private Vector2u GetSizeDirectly() => SFMLTexture.sfTexture_getSize(TexturePtr);
+            public void Dispose()
+            {
+                Free(TexturePtr);
+            }
+            private static TextureEntry GetSprite(string filename)
+            {
+                var rect = new IntRect();
+                var entry = new TextureEntry()
+                {
+                    HashCode = filename.GetHashCode(),
+                    TexturePtr = SFMLTexture.sfTexture_createFromFile(filename, ref rect),
+                };
+                entry.Info = SpriteInfo.NormalSprite(entry.GetSizeDirectly());
+                return entry;
+            }
+            public static TextureEntry NewSprite(string filename)
+            {
+                var entry = GetSprite(filename);
+                entry.Info = SpriteInfo.NormalSprite(entry.GetSizeDirectly());
+                return entry;
+            }
+            public static TextureEntry NewSpriteSheet(string filename, Vector2u spriteSize)
+            {
+                var entry = GetSprite(filename);
+                entry.Info = SpriteInfo.SpriteSheet(entry.GetSizeDirectly(), spriteSize);
+                return entry;
+            }
+            public static TextureEntry NewSpriteFromExistingSheet(TextureEntry* spriteSheet, int spriteSheetIndex)
+            {
+                var entry = new TextureEntry()
+                {
+                    HashCode = spriteSheet->HashCode + spriteSheetIndex + 1,
+                    TexturePtr = spriteSheet->TexturePtr,
+                };
+                entry.Info = SpriteInfo.SpriteFromSheet(spriteSheetIndex, spriteSheet->Info.IndividualSpriteSize);
+                return entry;
+            }
+        }
+        */
         public struct Objects
         {
             internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
@@ -1009,12 +1119,24 @@ namespace ECS
             {
                 var index = LookupTable.GetDataTableIndex<T>();
                 var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
-                var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
-                var next = iterator.Next;
-                while(next != null)
+
+                if(multi_threaded)
                 {
-                    action(ref *next->GetDataPointer<T>());
-                    next = iterator.Next;
+                    var iterator = ParallelHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                    iterator.Start(x =>
+                    {
+                        action(ref *x.GetDataPointer<T>());
+                    });
+                }
+                else
+                {
+                    var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                    var next = iterator.Next;
+                    while (next != null)
+                    {
+                        action(ref *next->GetDataPointer<T>());
+                        next = iterator.Next;
+                    }
                 }
             }
             public static void Iterate<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
@@ -1027,13 +1149,61 @@ namespace ECS
 
                 var size = Math.Min(tableCount, tableCount2);
 
-                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
-                var next = iterator.Next;
-                while (next != null)
+                if(multi_threaded)
                 {
-                    action(ref *next->GetDataPointer<T>(),
-                           ref *next->GetDataPointer<U>());
-                    next = iterator.Next;
+                    var iterator = ParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    iterator.Start(x =>
+                    {
+                        action(ref *x.GetDataPointer<T>(),
+                               ref *x.GetDataPointer<U>());
+                    });
+                }
+                else
+                {
+                    var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    var next = iterator.Next;
+                    while (next != null)
+                    {
+                        action(ref *next->GetDataPointer<T>(),
+                               ref *next->GetDataPointer<U>());
+                        next = iterator.Next;
+                    }
+                }
+            }
+            public static void Iterate<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var index2 = LookupTable.GetDataTableIndex<U>();
+                var index3 = LookupTable.GetDataTableIndex<V>();
+
+                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+                var tableCount3 = LookupTable.GetDataTableFromIndex(index3)->TotalHookCount();
+
+                var size = Math.Min(tableCount, tableCount2);
+                size = Math.Min(size, tableCount3);
+
+                if (multi_threaded)
+                {
+                    var iterator = ParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOfAll(index, index2, index3));
+                    iterator.Start(x =>
+                    {
+                        action(ref *x.GetDataPointer<T>(),
+                               ref *x.GetDataPointer<U>(),
+                               ref *x.GetDataPointer<V>());
+                    });
+                }
+                else
+                {
+                    var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOfAll(index, index2, index3));
+                    var next = iterator.Next;
+                    while (next != null)
+                    {
+                        action(ref *next->GetDataPointer<T>(),
+                               ref *next->GetDataPointer<U>(),
+                               ref *next->GetDataPointer<V>());
+                        next = iterator.Next;
+                    }
                 }
             }
 
@@ -1047,14 +1217,27 @@ namespace ECS
 
                 var size = Math.Min(tableCount, tableCount2);
 
-                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
-                var next = iterator.Next;
-                while (next != null)
+                if(mutli_threaded)
                 {
-                    action(ref *next->GetDataPointer<T>(),
-                           ref *next->GetDataPointer<U>(),
-                           ref *next);
-                    next = iterator.Next;
+                    var iterator = ParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    iterator.Start(x =>
+                    {
+                        action(ref *x.GetDataPointer<T>(),
+                               ref *x.GetDataPointer<U>(),
+                               ref x);
+                    });
+                }
+                else
+                {
+                    var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    var next = iterator.Next;
+                    while (next != null)
+                    {
+                        action(ref *next->GetDataPointer<T>(),
+                               ref *next->GetDataPointer<U>(),
+                               ref *next);
+                        next = iterator.Next;
+                    }
                 }
             }
             public static void IgnoreCollisions<T>() where T : unmanaged => ignoredCollisions.Add(LookupTable.GetDataTableIndex<T>());
@@ -1175,37 +1358,24 @@ namespace ECS
 
                             if (physics_enabled)
                             {
+                                throw new NotImplementedException();
+
                                 // Get physics body and velocity
-                                if (list[i].ID == 6) // test condition, objects are "applied force to" twice leading to 0'd velocities
+                                
+                                /*if (list[i].ID == 6) // test condition, objects are "applied force to" twice leading to 0'd velocities
                                 {
                                     continue;
-                                }
+                                }*/
 
-                                var thisBody = cObject.GetDataPointer<PhysicsBody>();
-                                var otherBody = list[i].GetDataPointer<PhysicsBody>();
-
-
-                                throw new NotImplementedException();
-                                //thisBody->ApplyForce(thisBody->Velocity);
-
-
-                                //otherBody->ApplyForce(otherBody->Velocity);
-
-                                //thisBody->ApplyForce(other->Position.Normalise());
-                                //otherBody->ApplyForce(transform->Position.Normalise());
-
-                                //transform->Position -= thisBody->Velocity * delta;
-                                //other->Position -= otherBody->Velocity * delta;
-
-                                //transform->Position -= this_pos.Direction(other_pos) * delta; // do this with velocity instead but +
-                                //other->Position -= other_pos.Direction(this_pos) * delta;
+                                //var thisBody = cObject.GetDataPointer<PhysicsBody>();
+                                //var otherBody = list[i].GetDataPointer<PhysicsBody>();
                             }
                         }
                     }
                 }
             }
         }
-        public struct Textures
+        internal struct Textures
         {
             public static IntPtr TryAddTexture(string filename)
             {
@@ -1216,15 +1386,36 @@ namespace ECS
             }
             public static IntPtr FindTexture(string filename)
             {
-                var entry = TextureTablePtr->FindRef((in TextureEntry x) => x.HashCode == filename.GetHashCode());
+                return FindTexture(filename.GetHashCode());
+            }
+            public static IntPtr FindTexture(int hashCode)
+            {
+                var entry = TextureTablePtr->FindRef((in TextureEntry x) => x.HashCode == hashCode);
                 if (entry == null)
                     return IntPtr.Zero;
                 return (IntPtr)entry;
             }
             public static IntPtr NewTexture(string filename)
             {
-                var index = TextureTablePtr->AddNew(TextureEntry.New(filename));
+                var index = TextureTablePtr->AddNew(TextureEntry.NewSprite(filename));
                 return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
+            }
+            public static IntPtr NewSpriteSheet(string filename, int count, Vector2u individualSpriteSize)
+            {
+                var index = TextureTablePtr->AddNew(TextureEntry.NewSpriteSheet(filename, count, individualSpriteSize));
+                return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
+            }
+            public static IntPtr NewSpriteSheet_CalcCount(string filename, Vector2u individualSpriteSize)
+            {
+                var index = TextureTablePtr->AddNew(TextureEntry.NewSpriteSheet_CalcCount(filename, individualSpriteSize));
+                return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
+            }
+            public static IntRect GetSpriteRectFromSheet(string filename, int index)
+            {
+                var entry = FindTexture(filename);
+                if (entry == IntPtr.Zero)
+                    return new IntRect();
+                return ((TextureEntry*)entry)->SheetInfo.GetTextureRectAtIndex(index);
             }
         }
         internal struct MetaData : IDisposable
@@ -1357,7 +1548,17 @@ namespace ECS.Library
             public bool Remove(Args args) => argsList.Remove(args);
             public int RemoveWhere(Predicate<Args> predicate) => argsList.RemoveAll(predicate);
             public void Clear() => argsList.Clear();
-            public bool Any(Func<Args, bool> predicate) => argsList.Any(predicate);
+            public bool Any(Func<Args, bool> predicate)
+            {
+                try
+                {
+                    return argsList.Any(predicate);
+                }
+                catch(InvalidOperationException)
+                {
+                    return false;
+                }
+            }
         }
     }
     public abstract class Engine
@@ -1374,6 +1575,14 @@ namespace ECS.Library
                 this.KeyReleased += OnKeyRelease;
                 this.MouseButtonPressed += OnMousePress;
                 this.MouseButtonReleased += OnMouseRelease;
+            }
+
+            public override void Close()
+            {
+                base.Close();
+#if DEBUG
+                Logger.Logger.Instance.WriteAllLogs();
+#endif
             }
 
             private void OnQuit(object sender, EventArgs args)
@@ -1408,7 +1617,7 @@ namespace ECS.Library
         internal EngineWindow ThisWindow = null;
 
         public abstract void Initialise();
-        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false);
+        public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false, false);
         private void GameLoop() // might make "public virtual"
         {
             var delta = CTime.DeltaTime;
@@ -1417,11 +1626,11 @@ namespace ECS.Library
                 var subsystem = Collection.Subsystems[i];
                 if (subsystem.IsStarted && subsystem.IsEnabled)
                 {
-#if DEBUG_TIMINGS
+#if DEBUG
                     var time = DateTime.Now;
                     subsystem.Update(delta);
                     var now = DateTime.Now;
-                    Console.WriteLine(subsystem.Name + ": " + ( now - time ).TotalMilliseconds);
+                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, subsystem.Name, ( now - time ).TotalMilliseconds.ToString());
 #else
                     subsystem.Update(delta);
 #endif
@@ -1454,9 +1663,14 @@ namespace ECS.Library
 #if SEPARATE_RENDER_THREAD
                 CTime.SetGameLoopThread(Thread.CurrentThread);
 #endif
+#if DEBUG
+                Logger.Logger.CreateLogger("TempLog_" + DateTime.Now.Ticks.ToString());
+#endif
+
                 MainEngine = (Engine)Activator.CreateInstance(engineType);
 
                 Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
+
                 Collection.AddNewSubsystem<RenderSubsystem>();
                 Collection.AddNewSubsystem<UISubsystem>();
                 Collection.Subsystems[0].Startup(); // special case exception
@@ -1469,15 +1683,13 @@ namespace ECS.Library
                 }
                 if (MainEngine.Settings.EnableCollisions)
                     Subsystem.AddNewDataType<Collider>();
+                if(MainEngine.Settings.EnableAnimations)
+                    Subsystem.AddNewDataType<Animation>();
 
                 MainEngine.Initialise();
 
-                bool foundCollisionSubsystem = Collection.Subsystems.Any(x => x.GetType().IsSubclassOf(typeof(CollisionSubsystem)));
-
-                if (MainEngine.Settings.EnableCollisions && !foundCollisionSubsystem)
-                    throw new SubsystemNotImplementedException("Collision");
-                if (!MainEngine.Settings.EnableCollisions && foundCollisionSubsystem)
-                    throw new SubsystemImplementedException("Collision");
+                Collection.SubsystemsToTestFor(new KeyValuePair<Type, bool>(typeof(CollisionSubsystem), MainEngine.Settings.EnableCollisions),
+                                               new KeyValuePair<Type, bool>(typeof(AnimationSubsystem), MainEngine.Settings.EnableAnimations));
 
                 Subsystem.SystemFlags.SetFlags();
 
@@ -1491,8 +1703,8 @@ namespace ECS.Library
                     var glnow = DateTime.Now;
                     float mpf = (float)( glnow - gltime ).TotalMilliseconds;
                     CTime.FPS = 1000f / mpf;
-#if DEBUG_TIMINGS
-                    Console.WriteLine("GameLoop: " + mpf);
+#if DEBUG
+                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "GameLoop", mpf.ToString());
 #endif
                 }
             }
@@ -1508,8 +1720,9 @@ namespace ECS.Library
         public string WindowName;
         public bool EnablePhysics;
         public bool EnableCollisions;
+        public bool EnableAnimations;
         public uint DesiredFrameRate;
-        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, Vector2u window_dimensions, string name, bool enable_physics, bool enable_collisions, uint desiredFrameRate = 60)
+        public EngineSettings(int mSize, int otSize, int dtSize, int texSize, Vector2u window_dimensions, string name, bool enable_physics, bool enable_collisions, bool enable_animations, uint desiredFrameRate = 60)
         {
             MainTableSize = mSize;
             ObjectTableSize = otSize;
@@ -1519,6 +1732,7 @@ namespace ECS.Library
             WindowName = name;
             EnablePhysics = enable_physics;
             EnableCollisions = enable_collisions;
+            EnableAnimations = enable_animations;
             DesiredFrameRate = desiredFrameRate;
         }
     }
@@ -1531,6 +1745,19 @@ namespace ECS.Library
             if (!type.IsAbstract && !Subsystems.Any(x => x.GetType() == type))
             {
                 Subsystems.Add((Subsystem)Activator.CreateInstance(type));
+            }
+        }
+        internal static void SubsystemsToTestFor(params KeyValuePair<Type, bool>[] subsystemTypes)
+        {
+            foreach(var kvp in subsystemTypes)
+            {
+                var type = kvp.Key;
+                bool foundSubsystem = Subsystems.Any(x => x.GetType().IsSubclassOf(type));
+
+                if (kvp.Value && !foundSubsystem)
+                    throw new SubsystemNotImplementedException(type.Name);
+                if (!kvp.Value && foundSubsystem)
+                    throw new SubsystemImplementedException(type.Name);
             }
         }
     }
@@ -1613,8 +1840,8 @@ namespace ECS.Library
             Engine.MainWindow.Display();
             Engine.MainWindow.Clear();
             CTime.DeltaTime = (float)( ( DateTime.Now - time ).TotalSeconds );
-#if DEBUG_TIMINGS
-            Console.WriteLine(Name + ": " + ( CTime.DeltaTime * 1000 ).ToString());
+#if DEBUG
+            Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Render", ( CTime.DeltaTime * 1000 ).ToString());
 #endif
 #endif
         }
@@ -1630,8 +1857,8 @@ namespace ECS.Library
             {
                 Engine.MainWindow.DispatchEvents();
                 var time = DateTime.Now;
-                //lock (SyncRoot)
-                //{
+                lock (SyncRoot)
+                {
                     Objects.Iterate((ref Texture texture, ref Transform transform) =>
                     {
                         var states = new RenderStates(transform.SFMLTransform);
@@ -1643,12 +1870,12 @@ namespace ECS.Library
                         var states = new RenderStates(transform.SFMLTransform);
                         text.Draw(Engine.MainWindow, states);
                     });
-                //}
+                }
                 Engine.MainWindow.Display();
                 Engine.MainWindow.Clear();
                 CTime.DeltaTime = (float)( ( DateTime.Now - time ).TotalSeconds );
-#if DEBUG_TIMINGS
-                Console.WriteLine(Name + ": " + ( CTime.DeltaTime * 1000 ).ToString());
+#if DEBUG
+                Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Render", ( CTime.DeltaTime * 1000 ).ToString());
 #endif
                 CTime.RegisterThreadContinuance(Thread.CurrentThread);
                 while (!CTime.AreOtherThreadsStillGoing(Thread.CurrentThread))
@@ -1723,6 +1950,11 @@ namespace ECS.Library
         }
     }
 
+    public abstract class AnimationSubsystem : Subsystem
+    {
+        
+    }
+
     public class UISubsystem : Subsystem
     {
         public override void Update(float deltaSeconds)
@@ -1795,18 +2027,20 @@ namespace ECS.Graphics
         TOP_RIGHT = 1,
         BOTTOM_LEFT = 2,
         BOTTOM_RIGHT = 3,
+        CENTRE = 4,
     }
     public static class GraphicsExtensions
     {
         public static Vector2f GetAbsoluteFromAnchor(this Anchor anchor)
         {
-            var windowDimensions = Library.Engine.MainEngine.Settings.WindowDimensions;
+            var windowDimensions = Engine.MainEngine.Settings.WindowDimensions;
             return anchor switch
             {
                 Anchor.TOP_LEFT => new Vector2f(),
                 Anchor.TOP_RIGHT => new Vector2f(windowDimensions.X, 0),
                 Anchor.BOTTOM_LEFT => new Vector2f(0, windowDimensions.Y),
                 Anchor.BOTTOM_RIGHT => new Vector2f(windowDimensions.X, windowDimensions.Y),
+                Anchor.CENTRE => new Vector2f(windowDimensions.X / 2, windowDimensions.Y / 2),
                 _ => throw new InvalidEnumValueException(typeof(Anchor).Name, (int)anchor)
             };
         }
@@ -1985,57 +2219,69 @@ namespace ECS.Graphics
     }
     public unsafe struct Texture : Drawable, IComponentData
     {
+        public static readonly Texture Null = new Texture();
+
+        internal int Index;
         internal bool ShouldDraw;
         internal Vertex4 Vertices;
         internal IntPtr TexturePtr;
         internal TextureEntry* Entry => (TextureEntry*)TexturePtr;
-        public Texture(string filename, bool shouldDraw) : this(filename)
-        {
-            ShouldDraw = shouldDraw;
-        }
         public Texture(string filename)
         {
             TexturePtr = Textures.TryAddTexture(filename);
             Vertices = new Vertex4();
             ShouldDraw = true;
+            Index = -1;
             UpdateTexture(TexturePtr);
         }
-        public void UpdateTexture(IntPtr texture)
+        public static Texture CreateSpriteSheet(string filename, Vector2u spriteSize)
+        {
+            var texture = new Texture()
+            {
+                TexturePtr = Textures.NewSpriteSheet_CalcCount(filename, spriteSize),
+                Vertices = new Vertex4(),
+                ShouldDraw = true,
+            };
+            texture.UpdateTexture(texture.TexturePtr);
+            return texture;
+        }
+        public void UpdateRectOnly()
+        {
+            var rect = Entry->SheetInfo.GetTextureRectAtIndex(Index);
+            var right = rect.Left + rect.Width;
+            var bottom = rect.Top + rect.Height;
+            Vertices.Vertex0.TexCoords = new Vector2f(rect.Left, rect.Top);
+            Vertices.Vertex1.TexCoords = new Vector2f(rect.Left, bottom);
+            Vertices.Vertex2.TexCoords = new Vector2f(right, rect.Top);
+            Vertices.Vertex3.TexCoords = new Vector2f(right, bottom);
+        }
+        public void UpdateTexture(IntPtr texture, int index = 0)
         {
             if (texture != IntPtr.Zero)
             {
+                this.Index = index;
                 this.TexturePtr = texture;
-
-                var size = Entry->GetSize();
-                Entry->TextureRect = new IntRect(0, 0, Convert.ToInt32(size.X), Convert.ToInt32(size.Y));
-
-                var left = Convert.ToSingle(Entry->TextureRect.Left);
-                var right = left + Entry->TextureRect.Width;
-                var top = Convert.ToSingle(Entry->TextureRect.Top);
-                var bottom = top + Entry->TextureRect.Height;
-
-                Vertices.Vertex0 = new Vertex(new Vector2f(0, 0), Color.White, new Vector2f(left, top));
-                Vertices.Vertex1 = new Vertex(new Vector2f(0, size.Y), Color.White, new Vector2f(left, bottom));
-                Vertices.Vertex2 = new Vertex(new Vector2f(size.X, 0), Color.White, new Vector2f(right, top));
+                var size = Entry->SheetInfo.IndividualSpriteSize;//Info.SpriteSize;
+                var rect = Entry->SheetInfo.GetTextureRectAtIndex(index);
+                var right = rect.Left + rect.Width;
+                var bottom = rect.Top + rect.Height;
+                Vertices.Vertex0 = new Vertex(new Vector2f(0, 0), Color.White, new Vector2f(rect.Left, rect.Top));
+                Vertices.Vertex1 = new Vertex(new Vector2f(0, size.Y), Color.White, new Vector2f(rect.Left, bottom));
+                Vertices.Vertex2 = new Vertex(new Vector2f(size.X, 0), Color.White, new Vector2f(right, rect.Top));
                 Vertices.Vertex3 = new Vertex(new Vector2f(size.X, size.Y), Color.White, new Vector2f(right, bottom));
             }
         }
-        public Texture ReturnNewTextureWithRandomColor()
+        public Texture GetSpriteFromSheet(int index)
         {
-            var texture = this;
-            texture.RandomiseColor();
-            return texture;
+            var _this = this;
+            _this.UpdateTexture(TexturePtr, index);
+            return _this;
         }
         public Texture CalculateShouldDraw(AABB _this, AABB other)
         {
             var texture = this;
             texture.ShouldDraw = other.Overlaps(_this);
             return texture;
-        }
-        public void RandomiseColor()
-        {
-            var color = new Color((byte)Next(0, 255), (byte)Next(0, 255), (byte)Next(0, 255));
-            SetColor(color);
         }
         public void SetColor(Color color)
         {
@@ -2049,7 +2295,7 @@ namespace ECS.Graphics
             this.SetColor(color);
             return this;
         }
-        public Vector2u GetSize => Entry->GetSize();
+        public Vector2u GetSize => Entry->SheetInfo.IndividualSpriteSize;
         public Color GetColor()
         {
             return Vertices.Vertex0.Color;
@@ -2903,10 +3149,51 @@ namespace ECS.UI
 }
 namespace ECS.Animations
 {
-    public struct Animation : IComponentData
+    using static CAllocation;
+    public unsafe struct Animation : IComponentData
     {
+        private struct AnimState
+        {
+            public IntPtr Entry;
+            public int Index;
+            public AnimState(IntPtr ptr, int index)
+            {
+                Entry = ptr;
+                Index = index;
+            }
+        }
         public uint FrameCount;
         public IntPtr Frames;
+        public Animation(uint frameCount)
+        {
+            FrameCount = frameCount;
+            Frames = Malloc((int)(sizeof(AnimState) * frameCount));
+            MemSet(Frames, 0, (int)(sizeof(AnimState) * frameCount));
+        }
+        public void SetAnimationFrameTo(int index, Texture texture)
+        {
+            if (index < 0 || index >= FrameCount)
+                throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
+            fixed(IntPtr* pFrames = &Frames)
+            {
+                var anim = (AnimState*)*pFrames;
+                *( anim + index ) = new AnimState(texture.TexturePtr, index);
+            }
+        }
+        public void SetAnimationFrameOf(int index, ref Texture texture)
+        {
+            if (index < 0 || index >= FrameCount)
+                throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
+            fixed (IntPtr* pFrames = &Frames)
+            {
+                var anim = ((AnimState*)*pFrames) + index;
+                if (texture.TexturePtr == anim->Entry && texture.Index == anim->Index)
+                    return;
+                texture.TexturePtr = anim->Entry;
+                texture.Index = anim->Index;
+                texture.UpdateRectOnly();
+            }
+        }
     }
 }
 namespace ECS.GarbageCollection
@@ -2929,9 +3216,14 @@ namespace ECS.GarbageCollection
 }
 namespace ECS.Exceptions
 {
+    using ECS.Logger;
     public abstract class CoreException : Exception
     {
-        public CoreException(string message) : base(message + "\nEngine core invalidated.") { }
+        public CoreException(string message) : base(message + "\nEngine core invalidated.")
+        {
+            Logger.Instance.AddLog(LogKey.Error, GetType().Name, message);
+            Logger.Instance.WriteAllLogs();
+        }
     }
     public class IncompatibleTypeException : CoreException
     {
@@ -2960,6 +3252,10 @@ namespace ECS.Exceptions
     public abstract class ThreadException : CoreException
     {
         public ThreadException(string message) : base(message + "\nAn error occurred while handling another thread.") { }
+    }
+    public abstract class TextureException : CoreException
+    {
+        public TextureException(string message) : base(message + "\nAn error occurred while handling textures.") { }
     }
     public class DataTableTypeIndexException : TableException
     {
@@ -2991,8 +3287,16 @@ namespace ECS.Exceptions
     }
     public class DataPointerNullException : PointerException
     {
-        public DataPointerNullException(string typeName) : base("Object could not access" + typeName + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
-        public DataPointerNullException(string typeName, string typeName2) : base("Object could not access" + typeName + " and/or " + typeName2 + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
+        public DataPointerNullException(string typeName) : base("Object could not access " + typeName + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
+        public DataPointerNullException(string typeName, string typeName2) : base("Object could not access " + typeName + " and/or " + typeName2 + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
+    }
+    public class TextureNotFoundException : TextureException
+    {
+        public TextureNotFoundException(string filename) : base("The loaded texture at " + filename + " could not be found. Either the path is wrong or the texture was not previously loaded.") { }
+    }
+    public class TextureSpriteSheetInvalidException : TextureException
+    {
+        public TextureSpriteSheetInvalidException() : base("This texture is not a sprite sheet and could not be partitioned.") { }
     }
     public class SubsystemNotImplementedException : SubsystemException
     {
@@ -3010,4 +3314,140 @@ namespace ECS.Exceptions
     {
         public RenderThreadCrossDrawingException() : base("Another thread, other than the designated render thread, attempted to draw to the screen.") { }
     }
+}
+namespace ECS.Logger
+{
+
+    public class Logger
+    {
+        public static Logger Instance { get; private set; } = null;
+
+        private static readonly object SyncRoot = new object();
+        private const string LoggerExtension = ".txt";
+
+        private readonly List<string> Logs = new List<string>();
+
+        public readonly bool IsFileRelative = true;
+        public readonly string LogFileName = "Log";
+
+        public string GetFileLocation()
+        {
+            if (IsFileRelative)
+                return Directory.GetCurrentDirectory() + "\\" + LogFileName + LoggerExtension;
+            return LogFileName + LoggerExtension;
+        }
+
+        public void WriteAllLogs()
+        {
+            lock (SyncRoot)
+            {
+                File.AppendAllLines(GetFileLocation(), Logs);
+                Logs.Clear();
+            }
+        }
+
+        public IEnumerable<LogItem> ReadAllLogs(bool includeCurrentOnes = false)
+        {
+            lock (SyncRoot)
+            {
+                foreach (var item in File.ReadAllLines(GetFileLocation()))
+                {
+                    yield return LogItem.FromString(item);
+                }
+                if (includeCurrentOnes)
+                {
+                    foreach (var item in Logs)
+                    {
+                        yield return LogItem.FromString(item);
+                    }
+                }
+            }
+        }
+
+        public void PrintAllLogs()
+        {
+            foreach (var item in ReadAllLogs())
+            {
+                Console.WriteLine(item.ToHumanReadable());
+            }
+        }
+
+        private Logger(string filename, bool relativeFileName = true, bool deleteOld = true)
+        {
+            LogFileName = filename;
+            IsFileRelative = relativeFileName;
+
+            if (deleteOld && File.Exists(GetFileLocation()))
+            {
+                File.Delete(GetFileLocation());
+            }
+        }
+
+        private void AddLog(string log)
+        {
+            lock (SyncRoot)
+            {
+                Logs.Add(log);
+            }
+        }
+        public void AddLog(LogItem item) => AddLog(item.ToString());
+        public void AddLog(LogKey key, string name, string value) => AddLog(new LogItem(key, name, value));
+
+        public static void CreateLogger(string filename)
+        {
+            Instance = new Logger(filename);
+        }
+    }
+    public enum LogKey
+    {
+        Default = 0,
+        DebugLog,
+        StatisticsLog,
+        Error,
+    }
+    public struct LogItem
+    {
+        private static readonly string[] SeparatorArray = new string[] { SeparatorString };
+        public const string SeparatorString = ":::";
+
+        public LogKey Key;
+        public string Name;
+        public string Value;
+        public long TimeStamp;
+
+        public LogItem(LogKey key, string name, string value)
+        {
+            Key = key;
+            Name = name;
+            Value = value;
+            TimeStamp = DateTime.Now.Ticks;
+            if (key is LogKey.DebugLog)
+                Debug.Log(this);
+        }
+
+        public DateTime ReturnDateTimeFromTimeStamp => new DateTime(TimeStamp);
+
+        public override string ToString()
+        {
+            return TimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
+        }
+
+        public string ToHumanReadable()
+        {
+            return ReturnDateTimeFromTimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
+        }
+
+        public static LogItem FromString(string loggedItem)
+        {
+            string[] split = loggedItem.Split(SeparatorArray, StringSplitOptions.None);
+            var item = new LogItem
+            {
+                Name = split[1],
+                Value = split[2],
+                TimeStamp = Convert.ToInt64(split[0])
+            };
+            return item;
+        }
+    }
+
 }
