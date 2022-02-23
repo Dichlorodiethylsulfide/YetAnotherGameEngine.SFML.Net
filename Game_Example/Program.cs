@@ -70,11 +70,14 @@ namespace Game_Example
             SpawnTexture = SpriteSheetTexture.GetSpriteFromSheet(0);
             BulletTexture = new Texture(Bullet);
             Arial = new ECS.UI.Font(ArialFont);
-            SquareAnimation = new Animation(5);
+            //SquareAnimation = new Animation(5);
+            //for (int i = 0; i < 5; i++)
+            //    SquareAnimation.SetAnimationFrameTo(i, SpriteSheetTexture);
+            SquareAnimation = new Animation("SquareAnimation", 5);
             for (int i = 0; i < 5; i++)
-                SquareAnimation.SetAnimationFrameTo(i, SpriteSheetTexture);
+                SquareAnimation.SetFrameDataTo(i, ref SpriteSheetTexture);
 #if GAME_TEST
-            AddNewSubsystem<NewCollisionSubsystem>();
+                AddNewSubsystem<NewCollisionSubsystem>();
             AddNewSubsystem<NewAnimationSubsystem>();
             AddNewSubsystem<PlayerSubsystem>();
             AddNewSubsystem<EnemySubsystem>();
@@ -175,7 +178,7 @@ namespace Game_Example
                 var increment = (int)( player.TotalHealth / animation.FrameCount );
                 var position = (int)Math.Abs(( player.Health / increment ) - animation.FrameCount);
                 position = position == animation.FrameCount ? position - 1 : position;
-                animation.SetAnimationFrameOf(position, ref texture);
+                animation.SetTextureDataTo(position, ref texture);
             });
 
             Objects.Iterate((ref EnemyData enemy, ref Animation animation, ref Texture texture) =>
@@ -183,7 +186,7 @@ namespace Game_Example
                 var increment = (int)( enemy.TotalHealth / animation.FrameCount );
                 var position = (int)Math.Abs(( enemy.Health / increment ) - animation.FrameCount);
                 position = position == animation.FrameCount ? position - 1 : position;
-                animation.SetAnimationFrameOf(position, ref texture);
+                animation.SetTextureDataTo(position, ref texture);
             }, true);
         }
     }

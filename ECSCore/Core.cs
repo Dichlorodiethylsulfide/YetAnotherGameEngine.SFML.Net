@@ -314,7 +314,7 @@ namespace ECS
     }
     public static unsafe class UnmanagedCSharp
     {
-        private const int DataTableStartIndex = 3; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
+        private const int DataTableStartIndex = 4; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
         internal static LookupTable* TablePtr => (LookupTable*)Table;
@@ -322,12 +322,14 @@ namespace ECS
         internal static Hook* ObjectTablePtr => (Hook*)*&TablePtr->Value0;
         internal static Hook* TextureTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 1 );
         internal static AABBTree* Tree => (AABBTree*)*( ( &TablePtr->Value0 ) + 2 );
-        public static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64)
+        internal static Hook* AnimationTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 3 );
+        public static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64, int animationSize = 64)
         {
             LookupTable.CreateTable(mainSize + DataTableStartIndex);
             LookupTable.AddNewType(CObject.Null, objectSize);
             LookupTable.AddNewType(TextureEntry.Null, textureSize);
             LookupTable.CreateCollisionTree(objectSize);
+            LookupTable.AddNewType(AnimationEntry.Null, animationSize);
             DefaultDataTableSize = defaultDataSize;
             LookupTable.AddNewDataType<Texture>();
             LookupTable.AddNewDataType<Transform>();
@@ -867,54 +869,6 @@ namespace ECS
                 return table;
             }
         }
-        /*
-        internal struct SpriteInfo
-        {
-            public bool IsSpriteSheet;
-            public int SpriteCount;
-            public int SpriteIndex;
-            public Vector2u SpriteSize;
-            public Vector2u IndividualSpriteSize;
-            public IntRect TextureRect;
-            public static SpriteInfo NormalSprite(Vector2u spriteSize)
-            {
-                var info = new SpriteInfo()
-                {
-                    IsSpriteSheet = false,
-                    SpriteCount = 0,
-                    SpriteIndex = 0,
-                    SpriteSize = spriteSize,
-                    TextureRect = new IntRect(0, 0, (int)spriteSize.X, (int)spriteSize.Y),
-                };
-                return info;
-            }
-            public static SpriteInfo SpriteSheet(Vector2u totalSheetSize, Vector2u spriteSize)
-            {
-                var info = new SpriteInfo()
-                {
-                    IsSpriteSheet = true,
-                    SpriteCount = (int)Math.Max(totalSheetSize.X / spriteSize.X, totalSheetSize.Y / spriteSize.Y), // check this
-                    SpriteIndex = -1,
-                    SpriteSize = totalSheetSize,
-                    IndividualSpriteSize = spriteSize,
-                    TextureRect = new IntRect(0, 0, (int)totalSheetSize.X, (int)totalSheetSize.Y),
-                };
-                return info;
-            }
-            public static SpriteInfo SpriteFromSheet(int index, Vector2u spriteSize)
-            {
-                var info = new SpriteInfo()
-                {
-                    IsSpriteSheet = false,
-                    SpriteCount = -1,
-                    SpriteIndex = index,
-                    SpriteSize = spriteSize,
-                    TextureRect = new IntRect(index * (int)spriteSize.X, 0, (int)spriteSize.X, (int)spriteSize.Y),
-                };
-                return info;
-            }
-        }
-        */
         internal struct SpriteSheetInfo
         {
             private struct IntRectIndex
@@ -926,8 +880,11 @@ namespace ECS
             public Vector2u TotalSize;
             public Vector2u IndividualSpriteSize;
             public IntPtr IntRects;
-            public SpriteSheetInfo(int count, Vector2u total, Vector2u individual)
+            public SpriteSheetInfo(Vector2u total, Vector2u individual)
             {
+                var sx = (int) (total.X / individual.X);
+                var sy = (int) (total.Y / individual.Y);
+                var count = sx * sy;
                 SpriteCount = count;
                 TotalSize = total;
                 IndividualSpriteSize = individual;
@@ -936,12 +893,25 @@ namespace ECS
                 fixed (IntPtr* ptr = &IntRects)
                 {
                     var int_rect = (IntRectIndex*)*ptr;
+                    for(int y = 0; y < sy; y++)
+                    {
+                        for(int x = 0; x < sx; x++)
+                        {
+                            var num_index = (int)( ( y * sy ) + x );
+                            var index = int_rect + num_index;
+                            index->Index = num_index;
+                            index->Rect = new IntRect(x * (int)individual.X, y * (int)individual.X, (int)individual.X, (int)individual.Y);
+
+                        }
+                    }
+                    /*
                     for(int i = 0; i < count; i++)
                     {
                         var index = int_rect + i;
                         index->Index = i;
                         index->Rect = new IntRect(i * (int)individual.X, 0, (int)individual.X, (int)individual.Y);
                     }
+                    */
                 }
             }
             public IntRect GetTextureRectAtIndex(int index)
@@ -952,6 +922,63 @@ namespace ECS
                 {
                     return ( ( (IntRectIndex*)*ptr ) + index )->Rect;
                 }
+            }
+        }
+        internal struct AnimationEntry : IDisposable
+        {
+            private struct AnimState
+            {
+                public IntPtr Entry;
+                public int Index;
+                public AnimState(IntPtr ptr, int index)
+                {
+                    Entry = ptr;
+                    Index = index;
+                }
+            }
+            public static readonly AnimationEntry Null = new AnimationEntry();
+
+            public int HashCode;
+            public uint FrameCount;
+            public IntPtr Frames;
+
+            public AnimationEntry(string name, uint frameCount)
+            {
+                FrameCount = frameCount;
+                Frames = Malloc((int)( sizeof(AnimState) * frameCount ));
+                MemSet(Frames, 0, (int)( sizeof(AnimState) * frameCount ));
+                HashCode = name.GetHashCode();
+            }
+
+            public void SetFrame(int index, ref Texture texture)
+            {
+                if (index < 0 || index >= FrameCount)
+                    throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
+                fixed (IntPtr* pFrames = &Frames)
+                {
+                    var anim = (AnimState*)*pFrames;
+                    *( anim + index ) = new AnimState(texture.TexturePtr, index);
+                }
+            }
+
+            public void GetFrame(int index, ref Texture texture)
+            {
+                if (index < 0 || index >= FrameCount)
+                    throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
+                fixed (IntPtr* pFrames = &Frames)
+                {
+                    var anim = ( (AnimState*)*pFrames ) + index;
+                    if (texture.TexturePtr == anim->Entry && texture.Index == anim->Index)
+                        return;
+                    texture.TexturePtr = anim->Entry;
+                    texture.Index = anim->Index;
+                    texture.UpdateRectOnly();
+                }
+            }
+
+            public void Dispose()
+            {
+                Free(Frames);
             }
         }
         internal struct TextureEntry : IDisposable
@@ -980,72 +1007,16 @@ namespace ECS
             {
                 var entry = GetSprite(filename);
                 var size = entry.GetSizeDirectly();
-                entry.SheetInfo = new SpriteSheetInfo(1, size, size);
-                return entry;
-            }
-            public static TextureEntry NewSpriteSheet_CalcCount(string filename, Vector2u spriteSize)
-            {
-                var entry = GetSprite(filename);
-                var size = entry.GetSizeDirectly();
-                var count = (int)( ( size.X / spriteSize.X ) / ( size.Y / spriteSize.Y ) );
-                entry.SheetInfo = new SpriteSheetInfo(count, size, spriteSize);
-                return entry;
-            }
-            public static TextureEntry NewSpriteSheet(string filename, int count, Vector2u spriteSize)
-            {
-                var entry = GetSprite(filename);
-                entry.SheetInfo = new SpriteSheetInfo(count, entry.GetSizeDirectly(), spriteSize);
-                return entry;
-            }
-        }
-        /*
-        
-        internal struct TextureEntry : IDisposable
-        {
-            public static readonly TextureEntry Null = new TextureEntry();
-            public int HashCode;
-            public SpriteInfo Info;
-            public IntPtr TexturePtr;
-            private Vector2u GetSizeDirectly() => SFMLTexture.sfTexture_getSize(TexturePtr);
-            public void Dispose()
-            {
-                Free(TexturePtr);
-            }
-            private static TextureEntry GetSprite(string filename)
-            {
-                var rect = new IntRect();
-                var entry = new TextureEntry()
-                {
-                    HashCode = filename.GetHashCode(),
-                    TexturePtr = SFMLTexture.sfTexture_createFromFile(filename, ref rect),
-                };
-                entry.Info = SpriteInfo.NormalSprite(entry.GetSizeDirectly());
-                return entry;
-            }
-            public static TextureEntry NewSprite(string filename)
-            {
-                var entry = GetSprite(filename);
-                entry.Info = SpriteInfo.NormalSprite(entry.GetSizeDirectly());
+                entry.SheetInfo = new SpriteSheetInfo(size, size);
                 return entry;
             }
             public static TextureEntry NewSpriteSheet(string filename, Vector2u spriteSize)
             {
                 var entry = GetSprite(filename);
-                entry.Info = SpriteInfo.SpriteSheet(entry.GetSizeDirectly(), spriteSize);
-                return entry;
-            }
-            public static TextureEntry NewSpriteFromExistingSheet(TextureEntry* spriteSheet, int spriteSheetIndex)
-            {
-                var entry = new TextureEntry()
-                {
-                    HashCode = spriteSheet->HashCode + spriteSheetIndex + 1,
-                    TexturePtr = spriteSheet->TexturePtr,
-                };
-                entry.Info = SpriteInfo.SpriteFromSheet(spriteSheetIndex, spriteSheet->Info.IndividualSpriteSize);
+                entry.SheetInfo = new SpriteSheetInfo(entry.GetSizeDirectly(), spriteSize);
                 return entry;
             }
         }
-        */
         public struct Objects
         {
             internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
@@ -1265,17 +1236,6 @@ namespace ECS
                     CCache.UniversalCheck = x => x.HasDataOf(CCache.TransformIndex) && x.HasDataOf(CCache.ColliderIndex);
                 }
 
-                /*
-                var index = LookupTable.GetDataTableIndex<Transform>();
-                var index2 = LookupTable.GetDataTableIndex<Collider>();
-
-                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
-                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
-
-                var size = Math.Min(tableCount, tableCount2);
-
-                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
-                */
                 var tableCount = 0;
                 var tableCount2 = 0;
                 fixed (Hook** hookPtr = &CCache.TransformHook)
@@ -1400,14 +1360,9 @@ namespace ECS
                 var index = TextureTablePtr->AddNew(TextureEntry.NewSprite(filename));
                 return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
             }
-            public static IntPtr NewSpriteSheet(string filename, int count, Vector2u individualSpriteSize)
+            public static IntPtr NewSpriteSheet(string filename, Vector2u individualSpriteSize)
             {
-                var index = TextureTablePtr->AddNew(TextureEntry.NewSpriteSheet(filename, count, individualSpriteSize));
-                return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
-            }
-            public static IntPtr NewSpriteSheet_CalcCount(string filename, Vector2u individualSpriteSize)
-            {
-                var index = TextureTablePtr->AddNew(TextureEntry.NewSpriteSheet_CalcCount(filename, individualSpriteSize));
+                var index = TextureTablePtr->AddNew(TextureEntry.NewSpriteSheet(filename, individualSpriteSize));
                 return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
             }
             public static IntRect GetSpriteRectFromSheet(string filename, int index)
@@ -1416,6 +1371,32 @@ namespace ECS
                 if (entry == IntPtr.Zero)
                     return new IntRect();
                 return ((TextureEntry*)entry)->SheetInfo.GetTextureRectAtIndex(index);
+            }
+        }
+        internal struct Animations
+        {
+            public static IntPtr TryAddAnimation(string filename, uint frame_count)
+            {
+                var ptr = FindAnimation(filename, frame_count);
+                if (ptr == IntPtr.Zero)
+                    ptr = NewAnimation(filename, frame_count);
+                return ptr;
+            }
+            public static IntPtr FindAnimation(string filename, uint frame_count)
+            {
+                return FindAnimation(filename.GetHashCode(), frame_count);
+            }
+            public static IntPtr FindAnimation(int hashCode, uint frame_count)
+            {
+                var entry = AnimationTablePtr->FindRef((in AnimationEntry x) => x.HashCode == hashCode && x.FrameCount == frame_count);
+                if (entry == null)
+                    return IntPtr.Zero;
+                return (IntPtr)entry;
+            }
+            public static IntPtr NewAnimation(string filename, uint frame_count)
+            {
+                var index = AnimationTablePtr->AddNew(new AnimationEntry(filename, frame_count));
+                return (IntPtr)AnimationTablePtr->GetRef<AnimationEntry>(index);
             }
         }
         internal struct MetaData : IDisposable
@@ -2238,7 +2219,7 @@ namespace ECS.Graphics
         {
             var texture = new Texture()
             {
-                TexturePtr = Textures.NewSpriteSheet_CalcCount(filename, spriteSize),
+                TexturePtr = Textures.NewSpriteSheet(filename, spriteSize),
                 Vertices = new Vertex4(),
                 ShouldDraw = true,
             };
@@ -3149,8 +3130,8 @@ namespace ECS.UI
 }
 namespace ECS.Animations
 {
-    using static CAllocation;
-    public unsafe struct Animation : IComponentData
+    using static UnmanagedCSharp;
+    /*public unsafe struct Animation : IComponentData
     {
         private struct AnimState
         {
@@ -3193,6 +3174,24 @@ namespace ECS.Animations
                 texture.Index = anim->Index;
                 texture.UpdateRectOnly();
             }
+        }
+    }*/
+    public unsafe struct Animation : IComponentData
+    {
+        private IntPtr internalEntry;
+        private AnimationEntry* Entry => (AnimationEntry*)internalEntry;
+        public uint FrameCount => Entry->FrameCount;
+        public Animation(string name, uint frame_count)
+        {
+            internalEntry = Animations.TryAddAnimation(name, frame_count);
+        }
+        public void SetTextureDataTo(int index, ref Texture texture)
+        {
+            Entry->GetFrame(index, ref texture);
+        }
+        public void SetFrameDataTo(int index, ref Texture texture)
+        {
+            Entry->SetFrame(index, ref texture);
         }
     }
 }
