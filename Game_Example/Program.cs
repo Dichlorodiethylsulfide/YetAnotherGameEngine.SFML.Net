@@ -36,18 +36,17 @@ namespace Game_Example
         {
             Console.WriteLine("Hello World!");
             Engine.Start(typeof(GameEngine));
+            //ECS.Logger.Logger.ReadAvailableLogs();
             Console.WriteLine("Goodbye World!");
         }
     }
     internal class GameEngine : Engine
     {
-        private const string ArialFont = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\arial.ttf";
-        private const string Bullet = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Bullet.png";
-        private const string ExitButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\ExitButton.png";
-        private const string StartButton = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\StartButton.png";
-        //private const string Placeholder = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Placeholder Block 2.png";
-        //private const string Placeholder = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Placeholder Block 3.png";
-        private const string SpriteSheet = @"C:\Users\rikil\Desktop\Backupable\Coding\C#\YetAnotherGameEngine.SFML.Net\Resources\Placeholder\Block_SpriteSheet.png";
+        public static readonly FilePath ArialFont = new FilePath(@"..\..\..\..\Resources\Placeholder\arial.ttf");
+        public static readonly FilePath Bullet = new FilePath(@"..\..\..\..\Resources\Placeholder\Bullet.png");
+        public static readonly FilePath ExitButton = new FilePath(@"..\..\..\..\Resources\Placeholder\ExitButton.png");
+        public static readonly FilePath StartButton = new FilePath(@"..\..\..\..\Resources\Placeholder\StartButton.png");
+        public static readonly FilePath SpriteSheet = new FilePath(@"..\..\..\..\Resources\Placeholder\Block_SpriteSheet.png");
 
         public static Texture SpriteSheetTexture;
         public static Texture StartTexture;
@@ -77,7 +76,7 @@ namespace Game_Example
             for (int i = 0; i < 5; i++)
                 SquareAnimation.SetFrameDataTo(i, ref SpriteSheetTexture);
 #if GAME_TEST
-                AddNewSubsystem<NewCollisionSubsystem>();
+            AddNewSubsystem<NewCollisionSubsystem>();
             AddNewSubsystem<NewAnimationSubsystem>();
             AddNewSubsystem<PlayerSubsystem>();
             AddNewSubsystem<EnemySubsystem>();
@@ -176,7 +175,7 @@ namespace Game_Example
             Objects.Iterate((ref PlayerData player, ref Animation animation, ref Texture texture) =>
             {
                 var increment = (int)( player.TotalHealth / animation.FrameCount );
-                var position = (int)Math.Abs(( player.Health / increment ) - animation.FrameCount);
+                var position = ( player.TotalHealth - player.Health ) / increment;
                 position = position == animation.FrameCount ? position - 1 : position;
                 animation.SetTextureDataTo(position, ref texture);
             });
@@ -184,7 +183,7 @@ namespace Game_Example
             Objects.Iterate((ref EnemyData enemy, ref Animation animation, ref Texture texture) =>
             {
                 var increment = (int)( enemy.TotalHealth / animation.FrameCount );
-                var position = (int)Math.Abs(( enemy.Health / increment ) - animation.FrameCount);
+                var position = ( enemy.TotalHealth - enemy.Health ) / increment;
                 position = position == animation.FrameCount ? position - 1 : position;
                 animation.SetTextureDataTo(position, ref texture);
             }, true);
@@ -318,7 +317,7 @@ namespace Game_Example
                 var enemy = CObject.New();
                 enemy.AddData(GameEngine.SpawnTexture.SetModifiedTextureColor(Color.Red));
                 enemy.AddData(new Transform(RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.X), RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.Y), 32, 32));
-                enemy.AddData(new EnemyData(10, 1, 100));
+                enemy.AddData(new EnemyData(10, 0, 100));
 #if PHYSICS_TEST
                 enemy.AddData(new PhysicsBody());
 #endif

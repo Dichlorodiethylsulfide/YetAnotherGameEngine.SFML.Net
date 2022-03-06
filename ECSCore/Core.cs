@@ -1,5 +1,6 @@
 #define SEPARATE_RENDER_THREAD
-//#undef SEPARATE_RENDER_THREAD
+
+#define MULTI_THREAD_SUBSYSTEMS
 
 using System;
 using System.IO;
@@ -106,6 +107,14 @@ namespace ECS
             }
         }
         public static float FPS { get; internal set; } = 0f;
+    }
+    public class FilePath
+    {
+        public string CurrentPath { get; internal set; }
+        public FilePath(string path) => CurrentPath = Path.GetFullPath(path);
+        public override string ToString() => CurrentPath;
+
+        public static implicit operator string(FilePath path) => path.ToString();
     }
     public interface IComponentData { }
     public static class Debug
@@ -326,10 +335,10 @@ namespace ECS
         public static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64, int animationSize = 64)
         {
             LookupTable.CreateTable(mainSize + DataTableStartIndex);
-            LookupTable.AddNewType(CObject.Null, objectSize);
-            LookupTable.AddNewType(TextureEntry.Null, textureSize);
+            LookupTable.AddNewType<CObject>(objectSize);
+            LookupTable.AddNewType<TextureEntry>(textureSize);
             LookupTable.CreateCollisionTree(objectSize);
-            LookupTable.AddNewType(AnimationEntry.Null, animationSize);
+            LookupTable.AddNewType<AnimationEntry>(animationSize);
             DefaultDataTableSize = defaultDataSize;
             LookupTable.AddNewDataType<Texture>();
             LookupTable.AddNewDataType<Transform>();
@@ -383,7 +392,7 @@ namespace ECS
                 }
             }
 
-            private void addNewType<T>(T empty, bool is_data_type, int size = 1024) where T : unmanaged
+            private void addNewType<T>(bool is_data_type, int size = 1024) where T : unmanaged
             {
                 Hook.NewTableChain<T>(size);
                 if(is_data_type)
@@ -406,10 +415,10 @@ namespace ECS
                 {
                     throw new IncompatibleTypeException(typeof(T).Name, typeof(IComponentData).Name);
                 }
-                TablePtr->addNewType(new T(), true, DefaultDataTableSize);
+                TablePtr->addNewType<T>(true, DefaultDataTableSize);
             }
 
-            public static void AddNewType<T>(T empty, int size = 1024) where T : unmanaged => TablePtr->addNewType(empty, false, size);
+            public static void AddNewType<T>(int size = 1024) where T : unmanaged => TablePtr->addNewType<T>(false, size);
 
             public static int GetDataTableIndex<T>()
             {
@@ -1278,6 +1287,7 @@ namespace ECS
                     else
                         check = CCache.UniversalCheck;
 
+                    /*
                     iterator = HookIterator<CObject>.GetIterator(size, check);
 
                     next = iterator.Next;
@@ -1287,6 +1297,23 @@ namespace ECS
                             PossibleCollisionsThisFrame.Add(*next, list);
                         next = iterator.Next;
                     }
+                    */
+                    
+                    var paraIterator = ParallelHookIterator<CObject>.GetIterator(size, check);
+                    paraIterator.Start(x =>
+                    {
+                        if (Tree->QueryOverlaps(x) is List<CObject> list && list.Count > 0)
+                        {
+                            lock(PossibleCollisionsThisFrame)
+                            {
+                                PossibleCollisionsThisFrame.Add(x, list);
+                            }
+                        }
+                    });
+
+#if DEBUG
+                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Possible Collision Count", PossibleCollisionsThisFrame.Count.ToString());
+#endif
                 }
             }
             public static void VerifyCollisions(bool physics_enabled)
@@ -1602,7 +1629,7 @@ namespace ECS.Library
         private void GameLoop() // might make "public virtual"
         {
             var delta = CTime.DeltaTime;
-            for (int i = 0; i < Collection.Subsystems.Count; i++)
+            void updateSubsystem(int i)
             {
                 var subsystem = Collection.Subsystems[i];
                 if (subsystem.IsStarted && subsystem.IsEnabled)
@@ -1617,7 +1644,17 @@ namespace ECS.Library
 #endif
                 }
             }
-            //Thread.Sleep((int)( CTime.DeltaTime * 1000 ));aa
+#if MULTI_THREAD_SUBSYSTEMS
+            Parallel.For(0, Collection.Subsystems.Count, i =>
+            {
+                updateSubsystem(i);
+            });
+#else
+            for (int i = 0; i < Collection.Subsystems.Count; i++)
+            {
+                updateSubsystem(i);
+            }
+#endif
 #if SEPARATE_RENDER_THREAD
             CTime.RegisterThreadContinuance(Thread.CurrentThread);
             while (!CTime.AreOtherThreadsStillGoing(Thread.CurrentThread))
@@ -1996,6 +2033,16 @@ namespace ECS.Strings
             return new_string;
         }
     }
+    public static class StringExtensions
+    {
+        public static string ToIString(this IEnumerable<char> chars)
+        {
+            string new_string = string.Empty;
+            foreach (var ch in chars)
+                new_string += ch;
+            return new_string;
+        }
+    }
 }
 namespace ECS.Graphics
 {
@@ -2207,7 +2254,7 @@ namespace ECS.Graphics
         internal Vertex4 Vertices;
         internal IntPtr TexturePtr;
         internal TextureEntry* Entry => (TextureEntry*)TexturePtr;
-        public Texture(string filename)
+        public Texture(FilePath filename)
         {
             TexturePtr = Textures.TryAddTexture(filename);
             Vertices = new Vertex4();
@@ -2215,7 +2262,7 @@ namespace ECS.Graphics
             Index = -1;
             UpdateTexture(TexturePtr);
         }
-        public static Texture CreateSpriteSheet(string filename, Vector2u spriteSize)
+        public static Texture CreateSpriteSheet(FilePath filename, Vector2u spriteSize)
         {
             var texture = new Texture()
             {
@@ -3110,7 +3157,7 @@ namespace ECS.UI
     public struct Font
     {
         public IntPtr CFont;
-        public Font(string filename)
+        public Font(FilePath filename)
         {
             CFont = SFML.Graphics.Font.sfFont_createFromFile(filename);
         }
@@ -3220,7 +3267,7 @@ namespace ECS.Exceptions
     {
         public CoreException(string message) : base(message + "\nEngine core invalidated.")
         {
-            Logger.Instance.AddLog(LogKey.Error, GetType().Name, message);
+            Logger.Instance.AddLog(LogKey.Error, GetType().Name, message.Where(x => x != '\n').ToIString());
             Logger.Instance.WriteAllLogs();
         }
     }
@@ -3319,10 +3366,10 @@ namespace ECS.Logger
 
     public class Logger
     {
-        public static Logger Instance { get; private set; } = null;
+        internal static Logger Instance { get; private set; } = null;
 
         private static readonly object SyncRoot = new object();
-        private const string LoggerExtension = ".txt";
+        private const string LoggerExtension = ".tempLog";
 
         private readonly List<string> Logs = new List<string>();
 
@@ -3345,6 +3392,17 @@ namespace ECS.Logger
             }
         }
 
+        private void ConstructLogsFromFile()
+        {
+            lock(SyncRoot)
+            {
+                foreach (var item in File.ReadAllLines(GetFileLocation()))
+                {
+                    AddLog(LogItem.FromString(item));
+                }
+            }
+        }
+        /*
         public IEnumerable<LogItem> ReadAllLogs(bool includeCurrentOnes = false)
         {
             lock (SyncRoot)
@@ -3370,15 +3428,18 @@ namespace ECS.Logger
                 Console.WriteLine(item.ToHumanReadable());
             }
         }
-
+        */
         private Logger(string filename, bool relativeFileName = true, bool deleteOld = true)
         {
             LogFileName = filename;
             IsFileRelative = relativeFileName;
 
-            if (deleteOld && File.Exists(GetFileLocation()))
+            if(File.Exists(GetFileLocation()))
             {
-                File.Delete(GetFileLocation());
+                if (deleteOld)
+                    File.Delete(GetFileLocation());
+                else
+                    ConstructLogsFromFile();
             }
         }
 
@@ -3392,9 +3453,44 @@ namespace ECS.Logger
         public void AddLog(LogItem item) => AddLog(item.ToString());
         public void AddLog(LogKey key, string name, string value) => AddLog(new LogItem(key, name, value));
 
-        public static void CreateLogger(string filename)
+        internal static void CreateLogger(string filename)
         {
             Instance = new Logger(filename);
+        }
+
+        public static void ReadAvailableLogs(bool inCurrentDirectory = true, string otherPath = "")
+        {
+            var path = inCurrentDirectory ? Directory.GetCurrentDirectory() : otherPath;
+            foreach (var file in Directory.GetFiles(path))
+            {
+                if (file.Contains(LoggerExtension))
+                {
+                    Console.WriteLine(file.Replace(path, ""));
+                    var logger = new Logger(Path.GetFileNameWithoutExtension(file), inCurrentDirectory, false);
+                    var averages = new Dictionary<string, List<float>>();
+                    foreach(var item in logger.Logs)
+                    {
+                        var logItem = LogItem.FromString(item);
+                        if(logItem.Key == LogKey.StatisticsLog)
+                        {
+                            if (averages.ContainsKey(logItem.Name))
+                                averages[logItem.Name].Add(Convert.ToSingle(logItem.Value));
+                            else
+                                averages.Add(logItem.Name, new List<float> { Convert.ToSingle(logItem.Value) });
+                        }
+                    }
+
+                    foreach(var kvp in averages)
+                    {
+                        Console.Write(kvp.Key + ": ");
+                        var value = 0f;
+                        foreach (var item in kvp.Value)
+                            value += item;
+                        Console.WriteLine(value / kvp.Value.Count);
+                    }
+                    Console.WriteLine();
+                }
+            }
         }
     }
     public enum LogKey
@@ -3428,22 +3524,27 @@ namespace ECS.Logger
 
         public override string ToString()
         {
-            return TimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
+            return Key.ToString() + SeparatorString + TimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
         }
 
         public string ToHumanReadable()
         {
             return ReturnDateTimeFromTimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
         }
-
+        private static readonly Dictionary<string, LogKey> EnumKeyDict = new Dictionary<string, LogKey>();
         public static LogItem FromString(string loggedItem)
         {
+            if (EnumKeyDict.Count == 0)
+                foreach (var entry in (LogKey[])Enum.GetValues(typeof(LogKey)))
+                    EnumKeyDict.Add(entry.ToString(), entry);
+
             string[] split = loggedItem.Split(SeparatorArray, StringSplitOptions.None);
             var item = new LogItem
             {
-                Name = split[1],
-                Value = split[2],
-                TimeStamp = Convert.ToInt64(split[0])
+                Key = EnumKeyDict[split[0]],
+                Name = split[2],
+                Value = split[3],
+                TimeStamp = Convert.ToInt64(split[1])
             };
             return item;
         }
