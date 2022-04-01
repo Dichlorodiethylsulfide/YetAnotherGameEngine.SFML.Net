@@ -6,6 +6,8 @@
 #undef BRUTE_FORCE_RENDERING
 #define PHYSICS_TEST
 #undef PHYSICS_TEST
+#define SHOW_LOGGER
+#undef SHOW_LOGGER
 
 using ECS;
 using ECS.Animations;
@@ -35,8 +37,11 @@ namespace Game_Example
         static void Main(string[] args)
         {
             Console.WriteLine("Hello World!");
+#if SHOW_LOGGER
+            ECS.Logger.Logger.ReadAvailableLogs();
+#else
             Engine.Start(typeof(GameEngine));
-            //ECS.Logger.Logger.ReadAvailableLogs();
+#endif
             Console.WriteLine("Goodbye World!");
         }
     }
@@ -96,11 +101,11 @@ namespace Game_Example
             button.AddData(ExitTexture);
             button.AddData(new Transform(-128, 0, 128, 64, 0, 0, 0, Anchor.TOP_RIGHT));
             button.AddData(new Button(() => Engine.Stop()));
-
         }
         public void StartDemo()
         {
             CObject.Destroy(Objects.Get("StartButton"));
+            //WObject.Destroy(Objects.Get("StartButton"));
 #if GAME_TEST
             var fpsCounter = CObject.New();
             fpsCounter.AddData(new Text("FPS: ", Arial, 20));
@@ -192,15 +197,26 @@ namespace Game_Example
 
     internal class PlayerSubsystem : Subsystem
     {
+        //public WObject PlayerObject;
+        //public WObject Health;
+        //public WObject FPS;
+
         public CObject PlayerObject;
-        public ByRefData<Text> Health;
-        public ByRefData<Text> FPS;
+        public CObject Health;
+        public CObject FPS;
+
+        //public CObject PlayerObject;
+        //public ByRefData<Text> Health;
+        //public ByRefData<Text> FPS;
         public override void Startup()
         {
             base.Startup();
             PlayerObject = Objects.Get("Player 1");
-            Health = Objects.GetDataRef<Text>("Health");
-            FPS = Objects.GetDataRef<Text>("FPSCounter");
+            Health = Objects.Get("Health");
+            FPS = Objects.Get("FPSCounter");
+            //PlayerObject = Objects.Get("Player 1");
+            //Health = Objects.GetDataRef<Text>("Health");
+            //FPS = Objects.GetDataRef<Text>("FPSCounter");
         }
         public override void Update(float deltaSeconds)
         {
@@ -226,7 +242,7 @@ namespace Game_Example
 
             });
 #else
-            PlayerObject.WriteData2((ref Transform transform, ref PlayerData player) =>
+            PlayerObject.WriteData((ref Transform transform, ref PlayerData player) =>
             {
                 if (Input.GetKeyPressed(Key.W))
                 {
@@ -257,7 +273,11 @@ namespace Game_Example
                 }
             });
 
-            Health.VolatileWrite((ref Text text) =>
+            /*Health.VolatileWrite((ref Text text) =>
+            {
+                text.ChangeText("Health: " + PlayerObject.GetData<PlayerData>().Health);
+            });*/
+            Health.WriteData((ref Text text) =>
             {
                 text.ChangeText("Health: " + PlayerObject.GetData<PlayerData>().Health);
             });
@@ -272,7 +292,11 @@ namespace Game_Example
                 }
             });
 
-            FPS.VolatileWrite((ref Text text) =>
+            /*FPS.VolatileWrite((ref Text text) =>
+            {
+                text.ChangeText("FPS: " + Math.Floor(CTime.FPS));
+            });*/
+            FPS.WriteData((ref Text text) =>
             {
                 text.ChangeText("FPS: " + Math.Floor(CTime.FPS));
             });
@@ -285,6 +309,13 @@ namespace Game_Example
         public static int EnemyCount = 0;
         private int spawnAmount = 500;
         private float spawnTimer = 1f;
+        //private WObject PlayerObject;
+        private CObject PlayerObject;
+        public override void Startup()
+        {
+            base.Startup();
+            PlayerObject = Objects.Get("Player 1");
+        }
         public override void Update(float deltaSeconds)
         {
             spawnTimer -= deltaSeconds;
@@ -293,13 +324,18 @@ namespace Game_Example
                 SpawnEnemy(spawnAmount);
                 EnemyCount += spawnAmount;
                 spawnTimer = 1f;
-                Objects.GetDataRef<Text>("EnemyCount").VolatileWrite((ref Text text) =>
+                /*Objects.GetDataRef<Text>("EnemyCount").VolatileWrite((ref Text text) =>
+                {
+                    text.ChangeText("Enemies: " + EnemyCount);
+                });*/
+                Objects.Get("EnemyCount").WriteData((ref Text text) =>
                 {
                     text.ChangeText("Enemies: " + EnemyCount);
                 });
             }
 #if !PHYSICS_TEST
-            var PlayerTarget = Objects.GetData<Transform>("Player 1");
+            //var PlayerTarget = Objects.GetData<Transform>("Player 1");
+            var PlayerTarget = PlayerObject.GetData<Transform>();
 
             Objects.Iterate((ref EnemyData enemy, ref Transform transform) =>
             {
@@ -317,7 +353,7 @@ namespace Game_Example
                 var enemy = CObject.New();
                 enemy.AddData(GameEngine.SpawnTexture.SetModifiedTextureColor(Color.Red));
                 enemy.AddData(new Transform(RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.X), RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.Y), 32, 32));
-                enemy.AddData(new EnemyData(10, 0, 100));
+                enemy.AddData(new EnemyData(10, 1, 100));
 #if PHYSICS_TEST
                 enemy.AddData(new PhysicsBody());
 #endif
@@ -329,15 +365,21 @@ namespace Game_Example
     }
     internal class NewCollisionSubsystem : CollisionSubsystem
     {
+        //public CObject PlayerObject;
+        //public ByRefData<Text> KillCounter;
+        //public WObject PlayerObject;
         public CObject PlayerObject;
-        public ByRefData<Text> KillCounter;
+        //public WObject KillCounter;
+        public CObject KillCounter;
 
         public override void Startup()
         {
             base.Startup();
-            VerifyCollisions = true;
+            //VerifyCollisions = true;
             PlayerObject = Objects.Get("Player 1");
-            KillCounter = Objects.GetDataRef<Text>("KillCounter");
+            KillCounter = Objects.Get("KillCounter");
+            //PlayerObject = Objects.Get("Player 1");
+            //KillCounter = Objects.GetDataRef<Text>("KillCounter");
 #if !PHYSICS_TEST
             Objects.IgnoreCollisions<EnemyData>();
 #endif
@@ -345,6 +387,8 @@ namespace Game_Example
         public override void Update(float deltaSeconds)
         {
             base.Update(deltaSeconds);
+
+            /*
             if(GetPossibleCollisions.ContainsKey(PlayerObject))
             {
                 var collisionsCount = GetPossibleCollisions[PlayerObject].Where(x => x.HasDataOf<EnemyData>());
@@ -366,7 +410,9 @@ namespace Game_Example
 
                         if(data.Health <= 0)
                         {
-                            CObject.Destroy(ref PlayerObject);
+                            //CObject.Destroy(ref PlayerObject);
+                            //WObject.Destroy(PlayerObject);
+                            CObject.Destroy(PlayerObject);
                             return;
                         }
                     }
@@ -380,7 +426,7 @@ namespace Game_Example
                 var count = hit.Count();
                 if (count == 0)
                     continue;
-                if(hit.First() is CObject cObject && !cObject.IsActiveNull())
+                if(hit.First() is CObject cObject && !cObject.IsNull)
                 {
                     cObject.WriteData((ref EnemyData data) =>
                     {
@@ -396,12 +442,106 @@ namespace Game_Example
                                 ++player.KillCount;
                                 kills += player.KillCount;
                             });
-                            KillCounter.VolatileWrite((ref Text text) => text.ChangeText(kills));
+                            //KillCounter.VolatileWrite((ref Text text) => text.ChangeText(kills));
+                            KillCounter.WriteData((ref Text text) => text.ChangeText(kills));
                         }
                     });
                 }
             }
-            
+            */
+
+            if(GetCollisionsOf(PlayerObject) is List<CObject> list && list.Count > 0)
+            {
+                PlayerObject.WriteData((ref PlayerData data) =>
+                {
+                    foreach (var item in list)
+                    {
+                        var enemyData = item.GetData<EnemyData>();
+                        if (enemyData.AttackCooldown <= 0)
+                        {
+                            data.Health -= enemyData.Damage;
+                            item.WriteData((ref EnemyData data) => data.AttackCooldown = 1f);
+                        }
+                        else
+                        {
+                            item.WriteData((ref EnemyData data) => data.AttackCooldown -= deltaSeconds);
+                        }
+
+                        if (data.Health <= 0)
+                        {
+                            CObject.Destroy(PlayerObject);
+                            return;
+                        }
+                    }
+                });
+            }
+
+            Objects.IterateWithObject((ref BulletData bulletdata, ref CObject cObject) =>
+            {
+                var bullet = cObject;
+                if(GetCollisionsOf(cObject) is List<CObject> list && list.Count > 0)
+                {
+                    var bdata = bulletdata;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var hit = list[i];
+                        if (hit.IsNull)
+                            continue;
+
+                        hit.WriteData((ref EnemyData data) =>
+                        {
+                            data.Health -= bdata.Damage;
+                            CObject.Destroy(bullet);
+
+                            if (data.Health <= 0)
+                            {
+                                CObject.Destroy(hit);
+                                EnemySubsystem.EnemyCount--;
+                                var kills = "Kill count: ";
+                                PlayerObject.WriteData((ref PlayerData player) =>
+                                {
+                                    ++player.KillCount;
+                                    kills += player.KillCount;
+                                });
+                                //KillCounter.VolatileWrite((ref Text text) => text.ChangeText(kills));
+                                KillCounter.WriteData((ref Text text) => text.ChangeText(kills));
+                            }
+                        });
+                    }
+                }
+            });
+
+            /*
+            var bullets = GetPossibleCollisions.Where(x => x.Key.HasDataOf<BulletData>());
+            foreach (var bullet in bullets)
+            {
+                var hit = bullet.Value.Where(x => x.HasDataOf<EnemyData>());
+                var count = hit.Count();
+                if (count == 0)
+                    continue;
+                if(hit.First() is CObject cObject && !cObject.IsNull)
+                {
+                    cObject.WriteData((ref EnemyData data) =>
+                    {
+                        data.Health -= bullet.Key.GetData<BulletData>().Damage;
+                        CObject.Destroy(bullet.Key);
+                        if (data.Health <= 0)
+                        {
+                            CObject.Destroy(hit.First());
+                            EnemySubsystem.EnemyCount--;
+                            var kills = "Kill count: ";
+                            PlayerObject.WriteData((ref PlayerData player) =>
+                            {
+                                ++player.KillCount;
+                                kills += player.KillCount;
+                            });
+                            //KillCounter.VolatileWrite((ref Text text) => text.ChangeText(kills));
+                            KillCounter.WriteData((ref Text text) => text.ChangeText(kills));
+                        }
+                    });
+                }
+            }*/
+
         }
     }
     internal struct PlayerData : IComponentData

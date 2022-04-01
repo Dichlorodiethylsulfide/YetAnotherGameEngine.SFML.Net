@@ -2,6 +2,9 @@
 
 #define MULTI_THREAD_SUBSYSTEMS
 
+#define CPP_ALLOCATION
+#undef CPP_ALLOCATION
+
 using System;
 using System.IO;
 using System.Threading;
@@ -38,6 +41,7 @@ namespace ECS
     using static Debug;
     using static UnmanagedCSharp;
     using static Maths.Maths;
+    using static ECS.Collections.Generic;
     public static class CTime
     {
         private static readonly object TimeSyncRoot = new object();
@@ -116,17 +120,21 @@ namespace ECS
 
         public static implicit operator string(FilePath path) => path.ToString();
     }
+    /// <summary>
+    /// Used for type clarity and their purpose when defining different types
+    /// </summary>
     public interface IComponentData { }
     public static class Debug
     {
         public static void Log<T>(T loggable) => Console.WriteLine(loggable.ToString());
         public static void Breakpoint() => Console.WriteLine("Hit a breakpoint.");
     }
+    /*
     public unsafe struct ByRefData<T> where T : unmanaged
     {
         public static readonly ByRefData<T> Null = new ByRefData<T>();
 
-        private T* ptr;
+        private readonly T* ptr;
         internal ByRefData(CObject* cObject)
         {
             if (!typeof(IComponentData).IsAssignableFrom(typeof(T)))
@@ -139,7 +147,7 @@ namespace ECS
     public unsafe struct ByRefObject
     {
         public static readonly ByRefObject Null = new ByRefObject();
-        private CObject* ptr;
+        private readonly CObject* ptr;
 
         internal ByRefObject(CObject* ptr)
         {
@@ -149,6 +157,81 @@ namespace ECS
         public CObject VolatileRead() => *ptr;
         public void VolatileWrite<T>(Ref<T> action) where T : unmanaged => action(ref *ptr->GetDataPointer<T>());
     }
+    */
+
+    ////////////////
+
+    /*
+    internal class WrappedList
+    {
+        private readonly Dictionary<long, WObject> objectList = new Dictionary<long, WObject>();
+        public void RemoveWrapper(long criteria) => objectList.Remove(criteria);
+        public void AddWrapper(long criteria, WObject wrapper) => objectList.Add(criteria, wrapper);
+        public bool WrapperExists(long criteria, out WObject wrapper) => objectList.TryGetValue(criteria, out wrapper);
+    }
+    public unsafe class WObject
+    {
+        private CObject* ptr;
+        public bool IsAlive
+        {
+            get
+            {
+                if (ptr is null)
+                    throw new MissingReferenceException();
+                return ptr->IsAlive;
+            }
+        }
+        internal WObject() => this.ptr = CObject.NewPtr();
+        internal WObject(CObject* existingPtr) => this.ptr = existingPtr;
+        public bool HasDataOf<T>() where T : unmanaged => IsAlive && ptr->HasDataOf<T>();
+        public void AddData<T>(T data) where T : unmanaged
+        {
+            if (IsAlive)
+                ptr->AddData(data);
+        }
+        public T GetData<T>() where T : unmanaged
+        {
+            if(IsAlive)
+                return ptr->GetData<T>();
+            return default;
+        }
+        public void WriteData<T>(Ref<T> action) where T : unmanaged
+        {
+            if(IsAlive)
+                ptr->WriteData(action);
+        }
+        public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
+        {
+            if (IsAlive)
+                ptr->WriteData(action);
+        }
+        public CObject Object
+        {
+            get
+            {
+                if (IsAlive)
+                    return *ptr;
+                return default;
+            }
+        }
+        public static void Destroy(WObject wObject)
+        {
+            if(wObject.IsAlive)
+            {
+                //Objects.WrappedList.RemoveWrapper(wObject.GetData<CString>().ToString().GetHashCode()); // bad, change?
+                //Objects.WrappedList.RemoveWrapper(wObject.ptr->GetDataPointer<CString>()->ToString().GetHashCode()); // bad, change?
+                //Objects.WrappedList.RemoveWrapper(wObject.ptr->ID);
+                // Already removed from wrapper list in CObject.Destroy
+                CObject.Destroy(*wObject.ptr);
+                wObject.ptr = null;
+            }
+        }
+        public static WObject New() => new WObject();
+    }
+    */
+
+
+    /*
     public struct CObject : IEquatable<CObject>, IDisposable
     {
         private static long incrementer = 1;
@@ -162,8 +245,12 @@ namespace ECS
         {
             get
             {
-                fixed(IntPtr* ptr = &MetaPtr)
+                fixed (IntPtr* ptr = &MetaPtr)
                 {
+                    if (ObjectTablePtr->GetRef<CObject>((int)Index)->MetaPtr != MetaPtr)
+                    {
+                        throw new MissingReferenceException();
+                    }
                     return (MetaData*)*ptr;
                 }
             }
@@ -171,13 +258,13 @@ namespace ECS
         public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(LookupTable.GetDataTableIndex<T>());
         internal unsafe bool HasDataOf(int index)
         {
-            if(!IsActiveNull())
+            if (!IsActiveNull())
                 return Meta->HasDataOf(index);
             return false;
         }
         internal unsafe bool HasDataOfAll(params int[] indexes)
         {
-            if(!IsActiveNull())
+            if (!IsActiveNull())
                 return Meta->HasDataOfAll(indexes);
             return false;
         }
@@ -209,7 +296,6 @@ namespace ECS
                     return *Meta->Get<T>(index);
                 }
             }
-            //return default;
             throw new DataPointerNullException(typeof(T).Name);
         }
         public void WriteData<T>(Ref<T> action) where T : unmanaged
@@ -225,11 +311,11 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name);
         }
-        public void WriteData2<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
+        public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
         {
             var index = LookupTable.GetDataTableIndex<T>();
             var index2 = LookupTable.GetDataTableIndex<U>();
-            if(HasDataOf(index) && HasDataOf(index2))
+            if (HasDataOf(index) && HasDataOf(index2))
             {
                 unsafe
                 {
@@ -264,9 +350,9 @@ namespace ECS
         {
             Destroy(this);
         }
-        
         internal void InternalDispose()
         {
+            //Objects.WrappedList.RemoveWrapper(ID);
             unsafe
             {
                 Meta->Dispose();
@@ -277,19 +363,17 @@ namespace ECS
             Index = -1;
             IsAlive = false;
         }
-        public static void Destroy(ref CObject obj)
-        {
-            Destroy(obj);
-            obj = Null;
-        }
         public static void Destroy(CObject obj)
         {
             unsafe
             {
-                lock(Subsystem.SyncRoot)
+                lock (Subsystem.SyncRoot)
                 {
-                    Objects.RemoveObjectAtIndex((int)obj.Index);
+                    var index = (int)obj.Index;
                     obj.InternalDispose();
+                    Objects.RemoveObjectAtIndex(index);
+                    //Objects.RemoveObjectAtIndex((int)obj.Index);
+                    //obj.InternalDispose();
                 }
             }
         }
@@ -304,12 +388,195 @@ namespace ECS
             };
             return obj;
         }
+        internal unsafe static CObject* NewPtr() => Objects.AddNewObject(incrementer++);
+        public static CObject New()
+        {
+            unsafe
+            {
+                return *NewPtr();
+            }
+        }
+    }
+    */
+
+    public struct CObject : IEquatable<CObject>, IDisposable
+    {
+        private static long incrementer = 1;
+        public static readonly CObject Null = new CObject();
+
+        internal long Index;
+        public bool IsAlive
+        {
+            get
+            {
+                if (IsInternalAlive)
+                    return true;
+                throw new MissingReferenceException();
+            }
+        }
+        public bool IsNull => this.MetaPtr == IntPtr.Zero;
+        internal bool IsInternalAlive
+        {
+            get
+            {
+                unsafe
+                {
+                    if (ObjectTablePtr->GetRef<CObject>((int)Index)->MetaPtr == MetaPtr)
+                        return true;
+                    return false;
+                }
+            }
+        }
+
+        internal IntPtr MetaPtr;
+        internal unsafe MetaData* Meta
+        {
+            get
+            {
+                fixed (IntPtr* ptr = &MetaPtr)
+                {
+                    return (MetaData*)*ptr;
+                }
+            }
+        }
+        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(LookupTable.GetDataTableIndex<T>());
+        internal unsafe bool HasDataOf(int index)
+        {
+            if (IsAlive)
+                return Meta->HasDataOf(index);
+            return false;
+        }
+        internal unsafe bool HasDataOfAll(params int[] indexes)
+        {
+            if (IsAlive)
+                return Meta->HasDataOfAll(indexes);
+            return false;
+        }
+        public long ID { get; private set; }
+        public void AddData<T>(T data) where T : unmanaged
+        {
+            if (!HasDataOf<T>())
+                Objects.AddObjectData(this, data);
+        }
+        internal unsafe T* GetDataPointer<T>() where T : unmanaged
+        {
+            var index = LookupTable.GetDataTableIndex<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    return Meta->Get<T>(index);
+                }
+            }
+            throw new DataPointerNullException(typeof(T).Name);
+        }
+        public T GetData<T>() where T : unmanaged
+        {
+            var index = LookupTable.GetDataTableIndex<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    return *Meta->Get<T>(index);
+                }
+            }
+            throw new DataPointerNullException(typeof(T).Name);
+        }
+        public void WriteData<T>(Ref<T> action) where T : unmanaged
+        {
+            var index = LookupTable.GetDataTableIndex<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    action(ref *Meta->Get<T>(index));
+                    return;
+                }
+            }
+            throw new DataPointerNullException(typeof(T).Name);
+        }
+        public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
+        {
+            var index = LookupTable.GetDataTableIndex<T>();
+            var index2 = LookupTable.GetDataTableIndex<U>();
+            if (HasDataOf(index) && HasDataOf(index2))
+            {
+                unsafe
+                {
+                    action(ref *Meta->Get<T>(index),
+                           ref *Meta->Get<U>(index2));
+                    return;
+                }
+            }
+            throw new DataPointerNullException(typeof(T).Name, typeof(U).Name);
+        }
+        public void OverwriteData<T>(T data) where T : unmanaged
+        {
+            var index = LookupTable.GetDataTableIndex<T>();
+            if (HasDataOf(index))
+            {
+                unsafe
+                {
+                    *Meta->Get<T>(index) = data;
+                    return;
+                }
+            }
+            throw new DataPointerNullException(typeof(T).Name);
+        }
+        //public unsafe bool IsActiveNull() => !IsAlive || this.ID <= 0 || MetaPtr == IntPtr.Zero || Meta->MaxSize == 0;
+        public override int GetHashCode() => (int)this.ID;
+        public bool Equals(CObject other) => this.ID == other.ID;
+        public void Dispose()
+        {
+            Destroy(this);
+        }
+        internal void InternalDispose()
+        {
+            unsafe
+            {
+                Meta->Dispose();
+            }
+            Free(MetaPtr);
+            MetaPtr = IntPtr.Zero;
+            ID = 0;
+            Index = -1;
+        }
+        public static void Destroy(ref CObject obj)
+        {
+            Destroy(obj);
+            obj = Null;
+        }
+        public static void Destroy(CObject obj)
+        {
+            unsafe
+            {
+                lock (Subsystem.SyncRoot)
+                {
+                    var index = (int)obj.Index;
+                    obj.InternalDispose();
+                    Objects.RemoveObjectAtIndex(index);
+                }
+            }
+        }
+        internal static CObject New(long index)
+        {
+            var obj = new CObject
+            {
+                ID = index,
+                Index = index - 1,
+                MetaPtr = MetaData.New(),
+            };
+            return obj;
+        }
         public static CObject New() => Objects.AddNewObject(incrementer++);
     }
+
+
     internal static class CAllocation
     {
+#if CPP_ALLOCATION
         private const string ECSDLL = "ECSDLL";
-
+        
         [DllImport(ECSDLL)]
         public static extern IntPtr Malloc(int size);
         [DllImport(ECSDLL)]
@@ -320,9 +587,35 @@ namespace ECS
         public static extern void MemSet(IntPtr ptr, int value, int size);
         [DllImport(ECSDLL)]
         public static extern void MemMove(IntPtr destination, IntPtr source, int size);
+#else
+        public static IntPtr Malloc(int size)
+        {
+            return Marshal.AllocHGlobal(size);
+        }
+        public static void Free(IntPtr ptr)
+        {
+            Marshal.FreeHGlobal(ptr);
+        }
+        public static void MemSet(IntPtr ptr, byte value, int size)
+        {
+            for (var i = 0; i < size; i++)
+            {
+                Marshal.WriteByte(ptr + i, value);
+            }
+        }
+        public static void MemMove(IntPtr destination, IntPtr source, int size)
+        {
+            for (var i = 0; i < size; i++)
+            {
+                var _byte = Marshal.ReadByte(source + i);
+                Marshal.WriteByte(destination + i, _byte);
+            }
+        }
+#endif
     }
     public static unsafe class UnmanagedCSharp
     {
+
         private const int DataTableStartIndex = 4; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
@@ -332,7 +625,7 @@ namespace ECS
         internal static Hook* TextureTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 1 );
         internal static AABBTree* Tree => (AABBTree*)*( ( &TablePtr->Value0 ) + 2 );
         internal static Hook* AnimationTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 3 );
-        public static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64, int animationSize = 64)
+        internal static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64, int animationSize = 64)
         {
             LookupTable.CreateTable(mainSize + DataTableStartIndex);
             LookupTable.AddNewType<CObject>(objectSize);
@@ -346,7 +639,6 @@ namespace ECS
             LookupTable.AddNewDataType<Button>();
             LookupTable.AddNewDataType<Text>();
             Tree->transformDataTableIndex = LookupTable.GetDataTableIndex<Transform>();
-            
         }
         public struct CTuple<T1, T2> where T1 : unmanaged where T2 : unmanaged
         {
@@ -460,9 +752,11 @@ namespace ECS
 
         public delegate bool PredicateIn<T>(in T t);
         public delegate void Ref<T0>(ref T0 data0);
-        public delegate void RefWithObject<T0, O0>(ref T0 data0, ref O0 object0);
+        public delegate void RefObject<T0, O0>(ref T0 data0, ref O0 object0);
+        //public delegate void RefWObject<T0>(ref T0 data0, WObject object0);
         public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
-        public delegate void RefWithObject<T0, T1, O0>(ref T0 data0, ref T1 data1, ref O0 object0);
+        public delegate void RefRefObject<T0, T1, O0>(ref T0 data0, ref T1 data1, ref O0 object0);
+        //public delegate void RefRefWObject<T0, T1>(ref T0 data0, ref T1 data1, WObject object0);
         public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
         public delegate bool Compare<T0>(in T0 data);
@@ -504,7 +798,6 @@ namespace ECS
                 totalReturned = 0;
                 limitReached = expectedLimit > 0 ? false : true;
             }
-
             public static ParallelHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
             {
                 var iterator = new ParallelHookIterator<CObject>();
@@ -731,6 +1024,7 @@ namespace ECS
                 table->Next = LinkableTable.NewTable(table, TableSize, new T());
                 Count++;
             }
+            
             public void AppendNewTable<T>() where T : unmanaged
             {
                 var table = Start;
@@ -738,7 +1032,7 @@ namespace ECS
                     table = table->Next;
                 NewTable<T>(table);
             }
-
+            
             public void DebugHook<T>() where T : unmanaged
             {
                 var total = 0;
@@ -751,7 +1045,7 @@ namespace ECS
                 Console.WriteLine("Total Tables: " + Count);
                 Console.WriteLine("Total Objects: " + total);
             }
-
+            
             public static void NewTableChain<T>(int size = 1024) where T : unmanaged
             {
                 var outer = Malloc(sizeof(Hook));
@@ -877,6 +1171,21 @@ namespace ECS
                 table->ClearTable(empty);
                 return table;
             }
+            /*
+            public static LinkableTable* NewTable<T>(int size, T empty) where T : unmanaged
+            {
+                var bytes = ( sizeof(int) * 5 ) + sizeof(IntPtr) + ( sizeof(T) * size );
+                var entry = Malloc(bytes);
+                MemSet(entry, 0, bytes);
+                var table = (LinkableTable*)entry;
+                table->AllocatedBytes = bytes;
+                table->ReadIndex = 0;
+                table->WriteIndex = 0;
+                table->Count = 0;
+                table->MaxSize = size;
+                table->ClearTable(empty);
+                return table;
+            }*/
         }
         internal struct SpriteSheetInfo
         {
@@ -1028,6 +1337,7 @@ namespace ECS
         }
         public struct Objects
         {
+            //internal static readonly WrappedList WrappedList = new WrappedList();
             internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
             {
                 var table = LookupTable.GetDataTable<T>();
@@ -1037,19 +1347,82 @@ namespace ECS
             internal static CObject AddNewObject(long index)
             {
                 var obj = CObject.New(index);
+                //var newIndex = ObjectTablePtr->AddNew(obj);
                 ObjectTablePtr->AddNew(obj);
-                return obj;
+                return obj;//ObjectTablePtr->GetRef<CObject>(newIndex);
             }
             internal static void RemoveObjectAtIndex(int index)
             {
                 ObjectTablePtr->RemoveAt<CObject>(index);
             }
-            public static Dictionary<CObject, List<CObject>> VerifiedCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
-            public static Dictionary<CObject, List<CObject>> PossibleCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
+            //public static Dictionary<CObject, List<CObject>> VerifiedCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
+            //public static Dictionary<CObject, List<CObject>> PossibleCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
 
             private readonly static List<int> ignoredCollisions = new List<int>();
+            /*
+            public static WObject Get(string name)
+            {
+                var ptr = GetPointer((in CString _string) => _string.Equals(name));
+                if (ptr is null)
+                    return null;
+                if (WrappedList.WrapperExists(ptr->ID, out var wrapper))
+                    return wrapper;
+                var newWrapper = new WObject(ptr);
+                WrappedList.AddWrapper(ptr->ID, newWrapper);
+                return newWrapper;
+            }
+            */
+            public static CObject Get(string name)
+            {
+                var ptr = GetPointer((in CString _string) => _string.Equals(name));
+                if (ptr is null)
+                    return CObject.Null;
+                return *ptr;
+            }
+            public static T GetData<T>(string name) where T : unmanaged => Get(name).GetData<T>();
+            internal static CObject* GetPointer<T>(PredicateIn<T> predicate) where T : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
+                var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                var next = iterator.Next;
+                while (next != null)
+                {
+                    if (predicate(in *next->GetDataPointer<T>()))
+                    {
+                        return next;
+                    }
+                    next = iterator.Next;
+                }
+                return null;
+            }
+            internal static CObject* GetPointer<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged
+            {
+                var index = LookupTable.GetDataTableIndex<T>();
+                var index2 = LookupTable.GetDataTableIndex<U>();
 
-            public static CObject Get(string name) => GetRef(name).VolatileRead();
+                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+
+                var size = Math.Min(tableCount, tableCount2);
+
+                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                var next = iterator.Next;
+                while (next != null)
+                {
+                    if (predicate(in *next->GetDataPointer<T>()))
+                    {
+                        return next;
+                    }
+                    next = iterator.Next;
+                }
+                return null;
+            }
+            internal static T GetData<T>(PredicateIn<T> predicate) where T : unmanaged => GetPointer(predicate)->GetData<T>();
+            internal static U GetData<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged => GetPointer(predicate)->GetData<U>();
+
+
+            /*public static CObject Get(string name) => GetRef(name).VolatileRead();
             public static ByRefObject GetRef(string name) => GetRef((in CString _string) => _string.Equals(name));
             public static T GetData<T>(string name) where T : unmanaged => GetDataRef<T>(name).VolatileRead();
             public static ByRefData<T> GetDataRef<T>(string name) where T : unmanaged => GetDataRef<CString, T>((in CString _string) => _string.Equals(name));
@@ -1094,7 +1467,7 @@ namespace ECS
 
             internal static ByRefData<T> GetDataRef<T>(PredicateIn<T> predicate) where T : unmanaged => new ByRefData<T>(GetRef(predicate).VolatilePtr());
             internal static ByRefData<U> GetDataRef<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged => new ByRefData<U>(GetRef<T, U>(predicate).VolatilePtr());
-
+            */
             public static void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
                 var index = LookupTable.GetDataTableIndex<T>();
@@ -1187,7 +1560,12 @@ namespace ECS
                 }
             }
 
-            public static void IterateWithObject<T, U>(RefWithObject<T, U, CObject> action, bool mutli_threaded = false) where T : unmanaged where U : unmanaged
+            public static void IterateWithObject<T>(RefObject<T, CObject> action, bool mutli_threaded = false) where T : unmanaged
+            {
+
+            }
+
+            public static void IterateWithObject<T, U>(RefRefObject<T, U, CObject> action, bool mutli_threaded = false) where T : unmanaged where U : unmanaged
             {
                 var index = LookupTable.GetDataTableIndex<T>();
                 var index2 = LookupTable.GetDataTableIndex<U>();
@@ -1220,6 +1598,7 @@ namespace ECS
                     }
                 }
             }
+            
             public static void IgnoreCollisions<T>() where T : unmanaged => ignoredCollisions.Add(LookupTable.GetDataTableIndex<T>());
             private struct CollisionCache
             {
@@ -1233,7 +1612,7 @@ namespace ECS
             private static CollisionCache CCache = new CollisionCache();
             public static void PossibleCollisionQuery()
             {
-                PossibleCollisionsThisFrame.Clear();
+                //PossibleCollisionsThisFrame.Clear();
 
                 if(!CCache.IsSet)
                 {
@@ -1270,6 +1649,7 @@ namespace ECS
                     {
                         Tree->UpdateObject(next);
                     }
+                    collider->CollisionsThisFrame = 0;
                     next = iterator.Next;
                 }
                 // Return collisions
@@ -1298,24 +1678,27 @@ namespace ECS
                         next = iterator.Next;
                     }
                     */
-                    
+
                     var paraIterator = ParallelHookIterator<CObject>.GetIterator(size, check);
                     paraIterator.Start(x =>
                     {
+                        /*
                         if (Tree->QueryOverlaps(x) is List<CObject> list && list.Count > 0)
                         {
                             lock(PossibleCollisionsThisFrame)
                             {
                                 PossibleCollisionsThisFrame.Add(x, list);
                             }
-                        }
+                        }*/
+                        x.GetDataPointer<Collider>()->CollisionsThisFrame = Tree->QueryOverlapCount(x);
                     });
 
-#if DEBUG
+/*#if DEBUG
                     Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Possible Collision Count", PossibleCollisionsThisFrame.Count.ToString());
-#endif
-                }
+#endif*/
+    }
             }
+            /*
             public static void VerifyCollisions(bool physics_enabled)
             {
                 if (PossibleCollisionsThisFrame.Count == 0)
@@ -1328,11 +1711,11 @@ namespace ECS
                     var transform = cObject.GetDataPointer<Transform>();
                     for (int i = 0; i < list.Count; i++)
                     {
-                        if (list[i].IsActiveNull())
+                        if (!list[i].IsInternalAlive)
                             continue;
 
                         var other = list[i].GetDataPointer<Transform>();
-                        if (!list[i].IsActiveNull() && transform->ExpensiveIntersection(other))
+                        if (list[i].IsInternalAlive && transform->ExpensiveIntersection(other))
                         {
                             if (VerifiedCollisionsThisFrame.ContainsKey(cObject))
                             {
@@ -1349,10 +1732,10 @@ namespace ECS
 
                                 // Get physics body and velocity
                                 
-                                /*if (list[i].ID == 6) // test condition, objects are "applied force to" twice leading to 0'd velocities
-                                {
-                                    continue;
-                                }*/
+                                //if (list[i].ID == 6) // test condition, objects are "applied force to" twice leading to 0'd velocities
+                                //{
+                                //    continue;
+                                //}
 
                                 //var thisBody = cObject.GetDataPointer<PhysicsBody>();
                                 //var otherBody = list[i].GetDataPointer<PhysicsBody>();
@@ -1360,7 +1743,7 @@ namespace ECS
                         }
                     }
                 }
-            }
+            }*/
         }
         internal struct Textures
         {
@@ -1955,16 +2338,26 @@ namespace ECS.Library
 
     public abstract class CollisionSubsystem : Subsystem
     {
-        public virtual bool VerifyCollisions { get; protected set; } = false;
-        public static Dictionary<CObject, List<CObject>> GetPossibleCollisions => Objects.PossibleCollisionsThisFrame;
-        public static Dictionary<CObject, List<CObject>> GetVerifiedCollisions => Objects.VerifiedCollisionsThisFrame;
+        //public virtual bool VerifyCollisions { get; protected set; } = false;
+        //public static Dictionary<CObject, List<CObject>> GetPossibleCollisions => Objects.PossibleCollisionsThisFrame;
+        //public static Dictionary<CObject, List<CObject>> GetVerifiedCollisions => Objects.VerifiedCollisionsThisFrame;
+        public List<CObject> GetCollisionsOf(CObject cObject)
+        {
+            var collider = cObject.GetData<Collider>();
+            if (collider.CollisionsThisFrame == 0)
+                return null;
+            unsafe
+            {
+                return Tree->QueryOverlaps(cObject);
+            }
+        }
         public override void Update(float deltaSeconds)
         {
             Objects.PossibleCollisionQuery();
-            if(VerifyCollisions)
+            /*if(VerifyCollisions)
             {
                 Objects.VerifyCollisions(Engine.MainEngine.Settings.EnablePhysics);
-            }
+            }*/
         }
     }
 
@@ -2334,8 +2727,9 @@ namespace ECS.Graphics
             if (Thread.CurrentThread != RenderSubsystem.RenderThread)
                 throw new RenderThreadCrossDrawingException();
 #endif
-            if (!ShouldDraw)
+            if (!ShouldDraw || TexturePtr == IntPtr.Zero)
                 return;
+
             states.CTexture = Entry->TexturePtr;
             ( (RenderWindow)target ).Draw(Vertices, PrimitiveType.TriangleStrip, states);
         }
@@ -2578,14 +2972,10 @@ namespace ECS.Physics
         public Vector2f Velocity;
         public Vector2f Acceleration;
     }
-    public enum ColliderType
-    {
-        Square = 0,
-    }
     public struct Collider : IComponentData
     {
         public bool IsInTree;
-        public ColliderType Type;
+        public int CollisionsThisFrame;
     }
 }
 namespace ECS.Collision
@@ -2966,7 +3356,36 @@ namespace ECS.Collision
             int nodeIndex = map[cObject->ID];
             updateLeaf(nodeIndex, cObject->Meta->Get<Transform>(transformDataTableIndex)->BoundingBox);
         }
+        public int QueryOverlapCount(CObject cObject)
+        {
+            int count = 0;
+            Stack<int> stack = new Stack<int>();
+            AABB testAabb = cObject.Meta->Get<Transform>(transformDataTableIndex)->BoundingBox;
+            stack.Push(rootNodeIndex);
+            while (stack.Count != 0)
+            {
+                int nodeIndex = stack.Pop();
 
+                if (nodeIndex == AABBNode.NULL_NODE)
+                    continue;
+
+                AABBNode* node = nodes.ReadPointerAt(nodeIndex);
+
+                if (node->AssociatedAABB.Overlaps(testAabb))
+                {
+                    if (node->IsLeaf() && !node->ObjectPointer->Equals(cObject))
+                    {
+                        count++;
+                    }
+                    else
+                    {
+                        stack.Push(node->LeftNodeIndex);
+                        stack.Push(node->RightNodeIndex);
+                    }
+                }
+            }
+            return count;
+        }
         public List<CObject> QueryOverlaps(CObject cObject)
         {
             List<CObject> overlaps = new List<CObject>();
@@ -3001,12 +3420,16 @@ namespace ECS.Collision
         {
             return QueryOverlaps(*cObject);
         }
+        public int QueryOverlapCount(CObject* cObject)
+        {
+            return QueryOverlapCount(*cObject);
+        }
 
         public void Dispose()
         {
             for(int i = 0; i < nodes.MaxSize; i++)
             {
-                if(nodes[i].ObjectPointer != null && !nodes[i].ObjectPointer->IsActiveNull())
+                if(nodes[i].ObjectPointer != null && nodes[i].ObjectPointer->IsInternalAlive)
                 {
                     Collider* collider = nodes[i].ObjectPointer->GetDataPointer<Collider>();
                     collider->IsInTree = false;
@@ -3335,6 +3758,11 @@ namespace ECS.Exceptions
     {
         public DataPointerNullException(string typeName) : base("Object could not access " + typeName + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
         public DataPointerNullException(string typeName, string typeName2) : base("Object could not access " + typeName + " and/or " + typeName2 + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
+    }
+    public class MissingReferenceException : PointerException
+    {
+        //public MissingReferenceException() : base("The object was already destroyed and this wrapper is no longer valid.") { }
+        public MissingReferenceException() : base("The object was already destroyed and this reference is no longer valid.") { }
     }
     public class TextureNotFoundException : TextureException
     {
