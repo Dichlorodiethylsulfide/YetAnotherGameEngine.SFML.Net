@@ -1,4 +1,10 @@
-# (IMPORTANT) Project requires ECSDLL.dll to be built and copied into the same folder as ECSCORE.dll (or Game_Example.dll if running it directly) !!
+# (IMPORTANT) 
+
+If building using CPP_ALLOCATION preprocessor command:
+
+    Project requires ECSDLL.dll to be built and copied into the same folder as ECSCORE.dll (or Game_Example.dll if running it directly) !!
+
+If not, the project will build as normal.
 
 ## SFML.Net - Simple and Fast Multimedia Library for .Net
 
