@@ -3,6 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>netcoreapp3.1</TargetFramework>
+    <Configurations>Debug;Release;GAME_TEST;BRUTE_FORCE_RENDERING;BRUTE_FORCE_RENDERING_DEBUG;GAME_TEST_DEBUG</Configurations>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ECSCore/ECSCore.csproj" />

@@ -1,9 +1,13 @@
 #define SEPARATE_RENDER_THREAD
 
 #define MULTI_THREAD_SUBSYSTEMS
+#undef MULTI_THREAD_SUBSYSTEMS
 
 #define CPP_ALLOCATION
-#undef CPP_ALLOCATION
+
+#if GAME_TEST_DEBUG || BRUTE_FORCE_RENDERING_DEBUG
+#define DEBUG
+#endif
 
 using System;
 using System.IO;
@@ -42,7 +46,7 @@ namespace ECS
     using static UnmanagedCSharp;
     using static Maths.Maths;
     using static ECS.Collections.Generic;
-    public static class CTime
+    public static class Time
     {
         private static readonly object TimeSyncRoot = new object();
         private struct FrameTimeDelay
@@ -67,7 +71,7 @@ namespace ECS
                     FrameTime.HasGameLoopUpdatedRecently = true;
             }
         }
-        internal static bool AreOtherThreadsStillGoing(Thread thread) // check the other thread's activity
+        internal static bool AreOtherThreadsStillGoing(Thread thread)
         {
             lock(TimeSyncRoot)
             {
@@ -123,282 +127,12 @@ namespace ECS
     /// <summary>
     /// Used for type clarity and their purpose when defining different types
     /// </summary>
-    public interface IComponentData { }
+    public interface ICData { }
     public static class Debug
     {
         public static void Log<T>(T loggable) => Console.WriteLine(loggable.ToString());
         public static void Breakpoint() => Console.WriteLine("Hit a breakpoint.");
     }
-    /*
-    public unsafe struct ByRefData<T> where T : unmanaged
-    {
-        public static readonly ByRefData<T> Null = new ByRefData<T>();
-
-        private readonly T* ptr;
-        internal ByRefData(CObject* cObject)
-        {
-            if (!typeof(IComponentData).IsAssignableFrom(typeof(T)))
-                throw new IncompatibleTypeException(typeof(T).Name, typeof(IComponentData).Name);
-            ptr = cObject->GetDataPointer<T>();
-        }
-        public T VolatileRead() => *ptr;
-        public void VolatileWrite(Ref<T> action) => action(ref *ptr);
-    }
-    public unsafe struct ByRefObject
-    {
-        public static readonly ByRefObject Null = new ByRefObject();
-        private readonly CObject* ptr;
-
-        internal ByRefObject(CObject* ptr)
-        {
-            this.ptr = ptr;
-        }
-        internal CObject* VolatilePtr() => ptr;
-        public CObject VolatileRead() => *ptr;
-        public void VolatileWrite<T>(Ref<T> action) where T : unmanaged => action(ref *ptr->GetDataPointer<T>());
-    }
-    */
-
-    ////////////////
-
-    /*
-    internal class WrappedList
-    {
-        private readonly Dictionary<long, WObject> objectList = new Dictionary<long, WObject>();
-        public void RemoveWrapper(long criteria) => objectList.Remove(criteria);
-        public void AddWrapper(long criteria, WObject wrapper) => objectList.Add(criteria, wrapper);
-        public bool WrapperExists(long criteria, out WObject wrapper) => objectList.TryGetValue(criteria, out wrapper);
-    }
-    public unsafe class WObject
-    {
-        private CObject* ptr;
-        public bool IsAlive
-        {
-            get
-            {
-                if (ptr is null)
-                    throw new MissingReferenceException();
-                return ptr->IsAlive;
-            }
-        }
-        internal WObject() => this.ptr = CObject.NewPtr();
-        internal WObject(CObject* existingPtr) => this.ptr = existingPtr;
-        public bool HasDataOf<T>() where T : unmanaged => IsAlive && ptr->HasDataOf<T>();
-        public void AddData<T>(T data) where T : unmanaged
-        {
-            if (IsAlive)
-                ptr->AddData(data);
-        }
-        public T GetData<T>() where T : unmanaged
-        {
-            if(IsAlive)
-                return ptr->GetData<T>();
-            return default;
-        }
-        public void WriteData<T>(Ref<T> action) where T : unmanaged
-        {
-            if(IsAlive)
-                ptr->WriteData(action);
-        }
-        public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
-        {
-            if (IsAlive)
-                ptr->WriteData(action);
-        }
-        public CObject Object
-        {
-            get
-            {
-                if (IsAlive)
-                    return *ptr;
-                return default;
-            }
-        }
-        public static void Destroy(WObject wObject)
-        {
-            if(wObject.IsAlive)
-            {
-                //Objects.WrappedList.RemoveWrapper(wObject.GetData<CString>().ToString().GetHashCode()); // bad, change?
-                //Objects.WrappedList.RemoveWrapper(wObject.ptr->GetDataPointer<CString>()->ToString().GetHashCode()); // bad, change?
-                //Objects.WrappedList.RemoveWrapper(wObject.ptr->ID);
-                // Already removed from wrapper list in CObject.Destroy
-                CObject.Destroy(*wObject.ptr);
-                wObject.ptr = null;
-            }
-        }
-        public static WObject New() => new WObject();
-    }
-    */
-
-
-    /*
-    public struct CObject : IEquatable<CObject>, IDisposable
-    {
-        private static long incrementer = 1;
-        public static readonly CObject Null = new CObject();
-
-        internal long Index;
-        internal bool IsAlive;
-
-        internal IntPtr MetaPtr;
-        internal unsafe MetaData* Meta
-        {
-            get
-            {
-                fixed (IntPtr* ptr = &MetaPtr)
-                {
-                    if (ObjectTablePtr->GetRef<CObject>((int)Index)->MetaPtr != MetaPtr)
-                    {
-                        throw new MissingReferenceException();
-                    }
-                    return (MetaData*)*ptr;
-                }
-            }
-        }
-        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(LookupTable.GetDataTableIndex<T>());
-        internal unsafe bool HasDataOf(int index)
-        {
-            if (!IsActiveNull())
-                return Meta->HasDataOf(index);
-            return false;
-        }
-        internal unsafe bool HasDataOfAll(params int[] indexes)
-        {
-            if (!IsActiveNull())
-                return Meta->HasDataOfAll(indexes);
-            return false;
-        }
-        public long ID { get; private set; }
-        public void AddData<T>(T data) where T : unmanaged
-        {
-            if (!HasDataOf<T>())
-                Objects.AddObjectData(this, data);
-        }
-        internal unsafe T* GetDataPointer<T>() where T : unmanaged
-        {
-            var index = LookupTable.GetDataTableIndex<T>();
-            if (HasDataOf(index))
-            {
-                unsafe
-                {
-                    return Meta->Get<T>(index);
-                }
-            }
-            throw new DataPointerNullException(typeof(T).Name);
-        }
-        public T GetData<T>() where T : unmanaged
-        {
-            var index = LookupTable.GetDataTableIndex<T>();
-            if (HasDataOf(index))
-            {
-                unsafe
-                {
-                    return *Meta->Get<T>(index);
-                }
-            }
-            throw new DataPointerNullException(typeof(T).Name);
-        }
-        public void WriteData<T>(Ref<T> action) where T : unmanaged
-        {
-            var index = LookupTable.GetDataTableIndex<T>();
-            if (HasDataOf(index))
-            {
-                unsafe
-                {
-                    action(ref *Meta->Get<T>(index));
-                    return;
-                }
-            }
-            throw new DataPointerNullException(typeof(T).Name);
-        }
-        public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
-        {
-            var index = LookupTable.GetDataTableIndex<T>();
-            var index2 = LookupTable.GetDataTableIndex<U>();
-            if (HasDataOf(index) && HasDataOf(index2))
-            {
-                unsafe
-                {
-                    action(ref *Meta->Get<T>(index),
-                           ref *Meta->Get<U>(index2));
-                    return;
-                }
-            }
-            throw new DataPointerNullException(typeof(T).Name, typeof(U).Name);
-        }
-        public void OverwriteData<T>(T data) where T : unmanaged
-        {
-            var index = LookupTable.GetDataTableIndex<T>();
-            if (HasDataOf(index))
-            {
-                unsafe
-                {
-                    *Meta->Get<T>(index) = data;
-                    return;
-                }
-            }
-            throw new DataPointerNullException(typeof(T).Name);
-        }
-        /// <summary>
-        /// Used to avoid AccessViolation and NullReference Exceptions
-        /// </summary>
-        /// <returns>False if object can be used, so !IsActiveNull() is the correct existence check, otherwise True</returns>
-        public unsafe bool IsActiveNull() => !IsAlive || this.ID <= 0 || MetaPtr == IntPtr.Zero || Meta->MaxSize == 0;
-        public override int GetHashCode() => (int)this.ID;
-        public bool Equals(CObject other) => this.ID == other.ID;
-        public void Dispose()
-        {
-            Destroy(this);
-        }
-        internal void InternalDispose()
-        {
-            //Objects.WrappedList.RemoveWrapper(ID);
-            unsafe
-            {
-                Meta->Dispose();
-            }
-            Free(MetaPtr);
-            MetaPtr = IntPtr.Zero;
-            ID = 0;
-            Index = -1;
-            IsAlive = false;
-        }
-        public static void Destroy(CObject obj)
-        {
-            unsafe
-            {
-                lock (Subsystem.SyncRoot)
-                {
-                    var index = (int)obj.Index;
-                    obj.InternalDispose();
-                    Objects.RemoveObjectAtIndex(index);
-                    //Objects.RemoveObjectAtIndex((int)obj.Index);
-                    //obj.InternalDispose();
-                }
-            }
-        }
-        internal static CObject New(long index)
-        {
-            var obj = new CObject
-            {
-                ID = index,
-                Index = index - 1,
-                MetaPtr = MetaData.New(),
-                IsAlive = true
-            };
-            return obj;
-        }
-        internal unsafe static CObject* NewPtr() => Objects.AddNewObject(incrementer++);
-        public static CObject New()
-        {
-            unsafe
-            {
-                return *NewPtr();
-            }
-        }
-    }
-    */
-
     public struct CObject : IEquatable<CObject>, IDisposable
     {
         private static long incrementer = 1;
@@ -411,10 +145,12 @@ namespace ECS
             {
                 if (IsInternalAlive)
                     return true;
+                if (IsNull)
+                    throw new NullReferenceException();
                 throw new MissingReferenceException();
             }
         }
-        public bool IsNull => this.MetaPtr == IntPtr.Zero;
+        public bool IsNull => this.MetaPtr == IntPtr.Zero || this.ID == 0;
         internal bool IsInternalAlive
         {
             get
@@ -429,17 +165,18 @@ namespace ECS
         }
 
         internal IntPtr MetaPtr;
-        internal unsafe MetaData* Meta
+        internal unsafe CMetaData* Meta
         {
             get
             {
                 fixed (IntPtr* ptr = &MetaPtr)
                 {
-                    return (MetaData*)*ptr;
+                    return (CMetaData*)*ptr;
                 }
             }
         }
-        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(LookupTable.GetDataTableIndex<T>());
+        public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(CLookupTable.GetDataTableIndex<T>());
+        public bool HasDataOf(Type type) => this.HasDataOf(CLookupTable.GetDataTableIndex(type));
         internal unsafe bool HasDataOf(int index)
         {
             if (IsAlive)
@@ -460,7 +197,7 @@ namespace ECS
         }
         internal unsafe T* GetDataPointer<T>() where T : unmanaged
         {
-            var index = LookupTable.GetDataTableIndex<T>();
+            var index = CLookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
@@ -472,7 +209,7 @@ namespace ECS
         }
         public T GetData<T>() where T : unmanaged
         {
-            var index = LookupTable.GetDataTableIndex<T>();
+            var index = CLookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
@@ -484,7 +221,7 @@ namespace ECS
         }
         public void WriteData<T>(Ref<T> action) where T : unmanaged
         {
-            var index = LookupTable.GetDataTableIndex<T>();
+            var index = CLookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
@@ -497,8 +234,8 @@ namespace ECS
         }
         public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
         {
-            var index = LookupTable.GetDataTableIndex<T>();
-            var index2 = LookupTable.GetDataTableIndex<U>();
+            var index = CLookupTable.GetDataTableIndex<T>();
+            var index2 = CLookupTable.GetDataTableIndex<U>();
             if (HasDataOf(index) && HasDataOf(index2))
             {
                 unsafe
@@ -512,7 +249,7 @@ namespace ECS
         }
         public void OverwriteData<T>(T data) where T : unmanaged
         {
-            var index = LookupTable.GetDataTableIndex<T>();
+            var index = CLookupTable.GetDataTableIndex<T>();
             if (HasDataOf(index))
             {
                 unsafe
@@ -523,7 +260,6 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name);
         }
-        //public unsafe bool IsActiveNull() => !IsAlive || this.ID <= 0 || MetaPtr == IntPtr.Zero || Meta->MaxSize == 0;
         public override int GetHashCode() => (int)this.ID;
         public bool Equals(CObject other) => this.ID == other.ID;
         public void Dispose()
@@ -532,14 +268,17 @@ namespace ECS
         }
         internal void InternalDispose()
         {
-            unsafe
+            if(IsAlive)
             {
-                Meta->Dispose();
+                unsafe
+                {
+                    Meta->Dispose();
+                }
+                Free(MetaPtr);
+                MetaPtr = IntPtr.Zero;
+                ID = 0;
+                Index = -1;
             }
-            Free(MetaPtr);
-            MetaPtr = IntPtr.Zero;
-            ID = 0;
-            Index = -1;
         }
         public static void Destroy(ref CObject obj)
         {
@@ -564,7 +303,7 @@ namespace ECS
             {
                 ID = index,
                 Index = index - 1,
-                MetaPtr = MetaData.New(),
+                MetaPtr = CMetaData.New(),
             };
             return obj;
         }
@@ -579,8 +318,6 @@ namespace ECS
         
         [DllImport(ECSDLL)]
         public static extern IntPtr Malloc(int size);
-        [DllImport(ECSDLL)]
-        public static extern IntPtr Realloc(IntPtr ptr, int size);
         [DllImport(ECSDLL)]
         public static extern void Free(IntPtr ptr);
         [DllImport(ECSDLL)]
@@ -619,26 +356,26 @@ namespace ECS
         private const int DataTableStartIndex = 4; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
         private static int DefaultDataTableSize = 0;
         private static IntPtr Table = IntPtr.Zero;
-        internal static LookupTable* TablePtr => (LookupTable*)Table;
+        internal static CLookupTable* TablePtr => (CLookupTable*)Table;
         internal static int DataTableEntries => TablePtr->Entries - DataTableStartIndex;
-        internal static Hook* ObjectTablePtr => (Hook*)*&TablePtr->Value0;
-        internal static Hook* TextureTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 1 );
+        internal static CHook* ObjectTablePtr => (CHook*)*&TablePtr->Value0;
+        internal static CHook* TextureTablePtr => (CHook*)*( ( &TablePtr->Value0 ) + 1 );
         internal static AABBTree* Tree => (AABBTree*)*( ( &TablePtr->Value0 ) + 2 );
-        internal static Hook* AnimationTablePtr => (Hook*)*( ( &TablePtr->Value0 ) + 3 );
+        internal static CHook* AnimationTablePtr => (CHook*)*( ( &TablePtr->Value0 ) + 3 );
         internal static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64, int animationSize = 64)
         {
-            LookupTable.CreateTable(mainSize + DataTableStartIndex);
-            LookupTable.AddNewType<CObject>(objectSize);
-            LookupTable.AddNewType<TextureEntry>(textureSize);
-            LookupTable.CreateCollisionTree(objectSize);
-            LookupTable.AddNewType<AnimationEntry>(animationSize);
+            CLookupTable.CreateTable(mainSize + DataTableStartIndex);
+            CLookupTable.AddNewType<CObject>(objectSize);
+            CLookupTable.AddNewType<CTextureEntry>(textureSize);
+            CLookupTable.CreateCollisionTree(objectSize);
+            CLookupTable.AddNewType<CAnimationEntry>(animationSize);
             DefaultDataTableSize = defaultDataSize;
-            LookupTable.AddNewDataType<Texture>();
-            LookupTable.AddNewDataType<Transform>();
-            LookupTable.AddNewDataType<CString>();
-            LookupTable.AddNewDataType<Button>();
-            LookupTable.AddNewDataType<Text>();
-            Tree->transformDataTableIndex = LookupTable.GetDataTableIndex<Transform>();
+            CLookupTable.AddNewDataType<CTexture>();
+            CLookupTable.AddNewDataType<CTransform>();
+            CLookupTable.AddNewDataType<CString>();
+            CLookupTable.AddNewDataType<CButton>();
+            CLookupTable.AddNewDataType<CText>();
+            Tree->transformDataTableIndex = CLookupTable.GetDataTableIndex<CTransform>();
         }
         public struct CTuple<T1, T2> where T1 : unmanaged where T2 : unmanaged
         {
@@ -651,7 +388,7 @@ namespace ECS
                 Item2 = item2;
             }
         }
-        internal struct LookupTable
+        internal struct CLookupTable
         {
             private static readonly Dictionary<Type, int> DataTableLookup = new Dictionary<Type, int>();
 
@@ -676,7 +413,7 @@ namespace ECS
                 {
                     for (int i = DataTableStartIndex; i < Entries; i++)
                     {
-                        var hook = (Hook*)*(ptrPtr + i);
+                        var hook = (CHook*)*(ptrPtr + i);
                         if (hook->DataType == type)
                             return i;
                     }
@@ -686,43 +423,49 @@ namespace ECS
 
             private void addNewType<T>(bool is_data_type, int size = 1024) where T : unmanaged
             {
-                Hook.NewTableChain<T>(size);
+                CHook.NewTableChain<T>(size);
                 if(is_data_type)
                     DataTableLookup.Add(typeof(T), getDataTable(typeof(T).GetHashCode()));
             }
 
-            private Hook* getDataTableFromIndex(int index)
+            private CHook* getDataTableFromIndex(int index)
             {
                 fixed (IntPtr* ptrPtr = &Value0)
                 {
                     if (index < 0 || index >= TablePtr->MaxSize)
                         throw new IndexInvalidException("Data Type tables", index, 0, TablePtr->MaxSize);
-                    return (Hook*)*( ptrPtr + index );
+                    return (CHook*)*( ptrPtr + index );
                 }
             }
 
             public static void AddNewDataType<T>() where T : unmanaged
             {
-                if(!typeof(IComponentData).IsAssignableFrom(typeof(T)))
+                if(!typeof(ICData).IsAssignableFrom(typeof(T)))
                 {
-                    throw new IncompatibleTypeException(typeof(T).Name, typeof(IComponentData).Name);
+                    throw new IncompatibleTypeException(typeof(T).Name, typeof(ICData).Name);
                 }
                 TablePtr->addNewType<T>(true, DefaultDataTableSize);
             }
 
             public static void AddNewType<T>(int size = 1024) where T : unmanaged => TablePtr->addNewType<T>(false, size);
 
+            public static int GetDataTableIndex(Type type)
+            {
+                if (DataTableLookup.TryGetValue(type, out var value))
+                    return value;
+                throw new DictionaryIndexInvalidException("DataTableLookup", type.Name);
+            }
             public static int GetDataTableIndex<T>()
             {
                 if (DataTableLookup.TryGetValue(typeof(T), out var value))
                     return value;
                 throw new DictionaryIndexInvalidException("DataTableLookup", typeof(T).Name);
             }
-            public static Hook* GetDataTable<T>() where T : unmanaged
+            public static CHook* GetDataTable<T>() where T : unmanaged
             {
                 return TablePtr->getDataTableFromIndex(GetDataTableIndex<T>());
             }
-            internal static Hook* GetDataTableFromIndex(int index)
+            internal static CHook* GetDataTableFromIndex(int index)
             {
                 return TablePtr->getDataTableFromIndex(index);
             }
@@ -732,8 +475,8 @@ namespace ECS
                 var bytes = ( sizeof(int) * 3 ) + ( sizeof(IntPtr) * size );
                 Table = Malloc(bytes);
                 MemSet(Table, 0, bytes);
-                var table = (LookupTable*)Table;
-                *table = new LookupTable();
+                var table = (CLookupTable*)Table;
+                *table = new CLookupTable();
                 table->Entries = 0;
                 table->MaxSize = size;
                 table->AllocatedBytes = bytes;
@@ -753,23 +496,21 @@ namespace ECS
         public delegate bool PredicateIn<T>(in T t);
         public delegate void Ref<T0>(ref T0 data0);
         public delegate void RefObject<T0, O0>(ref T0 data0, ref O0 object0);
-        //public delegate void RefWObject<T0>(ref T0 data0, WObject object0);
         public delegate void RefRef<T0, T1>(ref T0 data0, ref T1 data1);
         public delegate void RefRefObject<T0, T1, O0>(ref T0 data0, ref T1 data1, ref O0 object0);
-        //public delegate void RefRefWObject<T0, T1>(ref T0 data0, ref T1 data1, WObject object0);
         public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
         public delegate bool Compare<T0>(in T0 data);
 
-        internal struct ParallelHookIterator<T> where T : unmanaged
+        internal struct CParallelHookIterator<T> where T : unmanaged
         {
-            private Hook* internalHook;
+            private CHook* internalHook;
             private int currentIndex;
             private int totalReturned;
             public int expectedLimit;
             private bool limitReached;
             private Predicate<T> predicateCheck;
-            private LinkableTable* currentTable;
+            private CLinkableTable* currentTable;
             public void Start(Action<T> onFindNext)
             {
                 var _this = this;
@@ -798,9 +539,9 @@ namespace ECS
                 totalReturned = 0;
                 limitReached = expectedLimit > 0 ? false : true;
             }
-            public static ParallelHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
+            public static CParallelHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
             {
-                var iterator = new ParallelHookIterator<CObject>();
+                var iterator = new CParallelHookIterator<CObject>();
                 iterator.internalHook = ObjectTablePtr;
                 iterator.currentTable = iterator.internalHook->Start;
                 iterator.currentIndex = 0;
@@ -811,15 +552,15 @@ namespace ECS
                 return iterator;
             }
         }
-        internal struct HookIterator<T> where T : unmanaged
+        internal struct CHookIterator<T> where T : unmanaged
         {
-            private Hook* internalHook;
+            private CHook* internalHook;
             private int currentIndex;
             private int totalReturned;
             public int expectedLimit;
             private bool limitReached;
             private Predicate<T> predicateCheck;
-            private LinkableTable* currentTable;
+            private CLinkableTable* currentTable;
 
             public T* Next
             {
@@ -857,9 +598,9 @@ namespace ECS
                 limitReached = expectedLimit > 0 ? false : true;
             }
 
-            public static HookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
+            public static CHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
             {
-                var iterator = new HookIterator<CObject>();
+                var iterator = new CHookIterator<CObject>();
                 iterator.internalHook = ObjectTablePtr;
                 iterator.currentTable = iterator.internalHook->Start;
                 iterator.currentIndex = 0;
@@ -871,14 +612,14 @@ namespace ECS
             }
         }
 
-        internal struct Hook
+        internal struct CHook
         {
             public int SizeOfData;
             public int DataType;
             public int Count;
             public int TableSize;
             public IntPtr Empty;
-            public LinkableTable* Start;
+            public CLinkableTable* Start;
             public ReadOnlySpan<byte> EmptySpan
             {
                 get
@@ -918,7 +659,7 @@ namespace ECS
                 var entryIndex = index - ( tableIndex * TableSize );
                 return new CTuple<int, int>(tableIndex, entryIndex);
             }
-            private LinkableTable* GetTable<T>(int index) where T : unmanaged
+            private CLinkableTable* GetTable<T>(int index) where T : unmanaged
             {
                 var table = Start;
                 for (int i = 0; i < index; i++)
@@ -1019,9 +760,9 @@ namespace ECS
                     table->WriteIndex = 0;
                 }
             }
-            private void NewTable<T>(LinkableTable* table) where T : unmanaged
+            private void NewTable<T>(CLinkableTable* table) where T : unmanaged
             {
-                table->Next = LinkableTable.NewTable(table, TableSize, new T());
+                table->Next = CLinkableTable.NewTable(table, TableSize, new T());
                 Count++;
             }
             
@@ -1048,28 +789,28 @@ namespace ECS
             
             public static void NewTableChain<T>(int size = 1024) where T : unmanaged
             {
-                var outer = Malloc(sizeof(Hook));
-                MemSet(outer, 0, sizeof(Hook));
-                var hook = (Hook*)outer;
+                var outer = Malloc(sizeof(CHook));
+                MemSet(outer, 0, sizeof(CHook));
+                var hook = (CHook*)outer;
                 hook->Empty = Malloc(sizeof(T));
                 MemSet(hook->Empty, 0, sizeof(T));
                 hook->DataType = typeof(T).GetHashCode();
                 hook->SizeOfData = sizeof(T);
                 hook->Count = 1;
                 hook->TableSize = size;
-                hook->Start = LinkableTable.NewTable(null, size, new T());
+                hook->Start = CLinkableTable.NewTable(null, size, new T());
                 TablePtr->Add(outer);
             }
         }
-        internal struct LinkableTable
+        internal struct CLinkableTable
         {
             public int ReadIndex;
             public int WriteIndex;
             public int Count;
             public int MaxSize;
             public int AllocatedBytes;
-            public LinkableTable* Previous;
-            public LinkableTable* Next;
+            public CLinkableTable* Previous;
+            public CLinkableTable* Next;
             public byte Value0;
 
             public int DebugTable<T>(T empty) where T : unmanaged
@@ -1155,12 +896,12 @@ namespace ECS
                 return *GetRef<T>(index);
             }
 
-            public static LinkableTable* NewTable<T>(LinkableTable* previous, int size, T empty) where T : unmanaged
+            public static CLinkableTable* NewTable<T>(CLinkableTable* previous, int size, T empty) where T : unmanaged
             {
-                var bytes = ( sizeof(int) * 5 ) + sizeof(IntPtr) + ( sizeof(LinkableTable*) * 2 ) + ( sizeof(T) * size );
+                var bytes = ( sizeof(int) * 5 ) + sizeof(IntPtr) + ( sizeof(CLinkableTable*) * 2 ) + ( sizeof(T) * size );
                 var entry = Malloc(bytes);
                 MemSet(entry, 0, bytes);
-                var table = (LinkableTable*)entry;
+                var table = (CLinkableTable*)entry;
                 table->AllocatedBytes = bytes;
                 table->ReadIndex = 0;
                 table->WriteIndex = 0;
@@ -1171,23 +912,8 @@ namespace ECS
                 table->ClearTable(empty);
                 return table;
             }
-            /*
-            public static LinkableTable* NewTable<T>(int size, T empty) where T : unmanaged
-            {
-                var bytes = ( sizeof(int) * 5 ) + sizeof(IntPtr) + ( sizeof(T) * size );
-                var entry = Malloc(bytes);
-                MemSet(entry, 0, bytes);
-                var table = (LinkableTable*)entry;
-                table->AllocatedBytes = bytes;
-                table->ReadIndex = 0;
-                table->WriteIndex = 0;
-                table->Count = 0;
-                table->MaxSize = size;
-                table->ClearTable(empty);
-                return table;
-            }*/
         }
-        internal struct SpriteSheetInfo
+        internal struct CSpriteSheetInfo : IDisposable
         {
             private struct IntRectIndex
             {
@@ -1198,7 +924,7 @@ namespace ECS
             public Vector2u TotalSize;
             public Vector2u IndividualSpriteSize;
             public IntPtr IntRects;
-            public SpriteSheetInfo(Vector2u total, Vector2u individual)
+            public CSpriteSheetInfo(Vector2u total, Vector2u individual)
             {
                 var sx = (int) (total.X / individual.X);
                 var sy = (int) (total.Y / individual.Y);
@@ -1222,14 +948,6 @@ namespace ECS
 
                         }
                     }
-                    /*
-                    for(int i = 0; i < count; i++)
-                    {
-                        var index = int_rect + i;
-                        index->Index = i;
-                        index->Rect = new IntRect(i * (int)individual.X, 0, (int)individual.X, (int)individual.Y);
-                    }
-                    */
                 }
             }
             public IntRect GetTextureRectAtIndex(int index)
@@ -1241,11 +959,17 @@ namespace ECS
                     return ( ( (IntRectIndex*)*ptr ) + index )->Rect;
                 }
             }
-        }
-        internal struct AnimationEntry : IDisposable
-        {
-            private struct AnimState
+            public void Dispose()
             {
+                Free(IntRects);
+            }
+        }
+        internal struct CAnimationEntry : IDisposable
+        {
+            public struct AnimState
+            {
+                public static readonly AnimState Null = new AnimState();
+
                 public IntPtr Entry;
                 public int Index;
                 public AnimState(IntPtr ptr, int index)
@@ -1254,13 +978,13 @@ namespace ECS
                     Index = index;
                 }
             }
-            public static readonly AnimationEntry Null = new AnimationEntry();
+            public static readonly CAnimationEntry Null = new CAnimationEntry();
 
             public int HashCode;
             public uint FrameCount;
             public IntPtr Frames;
 
-            public AnimationEntry(string name, uint frameCount)
+            public CAnimationEntry(string name, uint frameCount)
             {
                 FrameCount = frameCount;
                 Frames = Malloc((int)( sizeof(AnimState) * frameCount ));
@@ -1268,7 +992,7 @@ namespace ECS
                 HashCode = name.GetHashCode();
             }
 
-            public void SetFrame(int index, ref Texture texture)
+            public void SetFrame(int index, ref CTexture texture)
             {
                 if (index < 0 || index >= FrameCount)
                     throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
@@ -1279,15 +1003,14 @@ namespace ECS
                 }
             }
 
-            public void GetFrame(int index, ref Texture texture)
+            public void SetTexture(int index, ref CTexture texture, ref CAnimation animation)
             {
                 if (index < 0 || index >= FrameCount)
                     throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
                 fixed (IntPtr* pFrames = &Frames)
                 {
                     var anim = ( (AnimState*)*pFrames ) + index;
-                    if (texture.TexturePtr == anim->Entry && texture.Index == anim->Index)
-                        return;
+                    animation.animState = *anim;
                     texture.TexturePtr = anim->Entry;
                     texture.Index = anim->Index;
                     texture.UpdateRectOnly();
@@ -1299,79 +1022,60 @@ namespace ECS
                 Free(Frames);
             }
         }
-        internal struct TextureEntry : IDisposable
+        internal struct CTextureEntry : IDisposable
         {
-            public static readonly TextureEntry Null = new TextureEntry();
+            public static readonly CTextureEntry Null = new CTextureEntry();
             public int HashCode;
-            public SpriteSheetInfo SheetInfo;
+            public CSpriteSheetInfo SheetInfo;
             public IntPtr TexturePtr;
             private Vector2u GetSizeDirectly() => SFMLTexture.sfTexture_getSize(TexturePtr);
             public void Dispose()
             {
                 Free(TexturePtr);
             }
-            private static TextureEntry GetSprite(string filename)
+            private static CTextureEntry GetSprite(string filename)
             {
                 var rect = new IntRect();
-                var entry = new TextureEntry()
+                var entry = new CTextureEntry()
                 {
                     HashCode = filename.GetHashCode(),
                     TexturePtr = SFMLTexture.sfTexture_createFromFile(filename, ref rect),
                 };
-                entry.SheetInfo = new SpriteSheetInfo();
+                entry.SheetInfo = new CSpriteSheetInfo();
                 return entry;
             }
-            public static TextureEntry NewSprite(string filename)
+            public static CTextureEntry NewSprite(string filename)
             {
                 var entry = GetSprite(filename);
                 var size = entry.GetSizeDirectly();
-                entry.SheetInfo = new SpriteSheetInfo(size, size);
+                entry.SheetInfo = new CSpriteSheetInfo(size, size);
                 return entry;
             }
-            public static TextureEntry NewSpriteSheet(string filename, Vector2u spriteSize)
+            public static CTextureEntry NewSpriteSheet(string filename, Vector2u spriteSize)
             {
                 var entry = GetSprite(filename);
-                entry.SheetInfo = new SpriteSheetInfo(entry.GetSizeDirectly(), spriteSize);
+                entry.SheetInfo = new CSpriteSheetInfo(entry.GetSizeDirectly(), spriteSize);
                 return entry;
             }
         }
         public struct Objects
         {
-            //internal static readonly WrappedList WrappedList = new WrappedList();
             internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
             {
-                var table = LookupTable.GetDataTable<T>();
+                var table = CLookupTable.GetDataTable<T>();
                 var index = table->AddNew(data);
-                cObject.Meta->Insert(LookupTable.GetDataTableIndex<T>(), index, (IntPtr)table->GetRef<T>(index));
+                cObject.Meta->Insert(CLookupTable.GetDataTableIndex<T>(), index, (IntPtr)table->GetRef<T>(index));
             }
             internal static CObject AddNewObject(long index)
             {
                 var obj = CObject.New(index);
-                //var newIndex = ObjectTablePtr->AddNew(obj);
                 ObjectTablePtr->AddNew(obj);
-                return obj;//ObjectTablePtr->GetRef<CObject>(newIndex);
+                return obj;
             }
             internal static void RemoveObjectAtIndex(int index)
             {
                 ObjectTablePtr->RemoveAt<CObject>(index);
             }
-            //public static Dictionary<CObject, List<CObject>> VerifiedCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
-            //public static Dictionary<CObject, List<CObject>> PossibleCollisionsThisFrame { get; private set; } = new Dictionary<CObject, List<CObject>>();
-
-            private readonly static List<int> ignoredCollisions = new List<int>();
-            /*
-            public static WObject Get(string name)
-            {
-                var ptr = GetPointer((in CString _string) => _string.Equals(name));
-                if (ptr is null)
-                    return null;
-                if (WrappedList.WrapperExists(ptr->ID, out var wrapper))
-                    return wrapper;
-                var newWrapper = new WObject(ptr);
-                WrappedList.AddWrapper(ptr->ID, newWrapper);
-                return newWrapper;
-            }
-            */
             public static CObject Get(string name)
             {
                 var ptr = GetPointer((in CString _string) => _string.Equals(name));
@@ -1382,9 +1086,9 @@ namespace ECS
             public static T GetData<T>(string name) where T : unmanaged => Get(name).GetData<T>();
             internal static CObject* GetPointer<T>(PredicateIn<T> predicate) where T : unmanaged
             {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
-                var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var tableCount = CLookupTable.GetDataTable<T>()->TotalHookCount();
+                var iterator = CHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
                 var next = iterator.Next;
                 while (next != null)
                 {
@@ -1398,15 +1102,15 @@ namespace ECS
             }
             internal static CObject* GetPointer<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged
             {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var index2 = LookupTable.GetDataTableIndex<U>();
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var index2 = CLookupTable.GetDataTableIndex<U>();
 
-                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
-                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+                var tableCount = CLookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = CLookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
 
                 var size = Math.Min(tableCount, tableCount2);
 
-                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                var iterator = CHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
                 var next = iterator.Next;
                 while (next != null)
                 {
@@ -1418,64 +1122,14 @@ namespace ECS
                 }
                 return null;
             }
-            internal static T GetData<T>(PredicateIn<T> predicate) where T : unmanaged => GetPointer(predicate)->GetData<T>();
-            internal static U GetData<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged => GetPointer(predicate)->GetData<U>();
-
-
-            /*public static CObject Get(string name) => GetRef(name).VolatileRead();
-            public static ByRefObject GetRef(string name) => GetRef((in CString _string) => _string.Equals(name));
-            public static T GetData<T>(string name) where T : unmanaged => GetDataRef<T>(name).VolatileRead();
-            public static ByRefData<T> GetDataRef<T>(string name) where T : unmanaged => GetDataRef<CString, T>((in CString _string) => _string.Equals(name));
-            internal static ByRefObject GetRef<T>(PredicateIn<T> predicate) where T : unmanaged
-            {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
-                var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
-                var next = iterator.Next;
-                while(next != null)
-                {
-                    if(predicate(in *next->GetDataPointer<T>()))
-                    {
-                        return new ByRefObject(next);
-                    }
-                    next = iterator.Next;
-                }
-                return ByRefObject.Null;
-            }
-            internal static ByRefObject GetRef<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged
-            {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var index2 = LookupTable.GetDataTableIndex<U>();
-
-                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
-                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
-
-                var size = Math.Min(tableCount, tableCount2);
-
-                var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
-                var next = iterator.Next;
-                while (next != null)
-                {
-                    if (predicate(in *next->GetDataPointer<T>()))
-                    {
-                        return new ByRefObject(next);
-                    }
-                    next = iterator.Next;
-                }
-                return ByRefObject.Null;
-            }
-
-            internal static ByRefData<T> GetDataRef<T>(PredicateIn<T> predicate) where T : unmanaged => new ByRefData<T>(GetRef(predicate).VolatilePtr());
-            internal static ByRefData<U> GetDataRef<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged => new ByRefData<U>(GetRef<T, U>(predicate).VolatilePtr());
-            */
             public static void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var tableCount = CLookupTable.GetDataTable<T>()->TotalHookCount();
 
                 if(multi_threaded)
                 {
-                    var iterator = ParallelHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                    var iterator = CParallelHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
                     iterator.Start(x =>
                     {
                         action(ref *x.GetDataPointer<T>());
@@ -1483,7 +1137,7 @@ namespace ECS
                 }
                 else
                 {
-                    var iterator = HookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                    var iterator = CHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
                     var next = iterator.Next;
                     while (next != null)
                     {
@@ -1494,17 +1148,17 @@ namespace ECS
             }
             public static void Iterate<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
             {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var index2 = LookupTable.GetDataTableIndex<U>();
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var index2 = CLookupTable.GetDataTableIndex<U>();
 
-                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
-                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+                var tableCount = CLookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = CLookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
 
                 var size = Math.Min(tableCount, tableCount2);
 
                 if(multi_threaded)
                 {
-                    var iterator = ParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    var iterator = CParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
                     iterator.Start(x =>
                     {
                         action(ref *x.GetDataPointer<T>(),
@@ -1513,7 +1167,7 @@ namespace ECS
                 }
                 else
                 {
-                    var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    var iterator = CHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
                     var next = iterator.Next;
                     while (next != null)
                     {
@@ -1525,20 +1179,20 @@ namespace ECS
             }
             public static void Iterate<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
             {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var index2 = LookupTable.GetDataTableIndex<U>();
-                var index3 = LookupTable.GetDataTableIndex<V>();
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var index2 = CLookupTable.GetDataTableIndex<U>();
+                var index3 = CLookupTable.GetDataTableIndex<V>();
 
-                var tableCount = LookupTable.GetDataTableFromIndex(index)->TotalHookCount();
-                var tableCount2 = LookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
-                var tableCount3 = LookupTable.GetDataTableFromIndex(index3)->TotalHookCount();
+                var tableCount = CLookupTable.GetDataTableFromIndex(index)->TotalHookCount();
+                var tableCount2 = CLookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
+                var tableCount3 = CLookupTable.GetDataTableFromIndex(index3)->TotalHookCount();
 
                 var size = Math.Min(tableCount, tableCount2);
                 size = Math.Min(size, tableCount3);
 
                 if (multi_threaded)
                 {
-                    var iterator = ParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOfAll(index, index2, index3));
+                    var iterator = CParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOfAll(index, index2, index3));
                     iterator.Start(x =>
                     {
                         action(ref *x.GetDataPointer<T>(),
@@ -1548,7 +1202,7 @@ namespace ECS
                 }
                 else
                 {
-                    var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOfAll(index, index2, index3));
+                    var iterator = CHookIterator<CObject>.GetIterator(size, x => x.HasDataOfAll(index, index2, index3));
                     var next = iterator.Next;
                     while (next != null)
                     {
@@ -1562,22 +1216,43 @@ namespace ECS
 
             public static void IterateWithObject<T>(RefObject<T, CObject> action, bool mutli_threaded = false) where T : unmanaged
             {
-
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var tableCount = CLookupTable.GetDataTable<T>()->TotalHookCount();
+                if (mutli_threaded)
+                {
+                    var iterator = CParallelHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                    iterator.Start(x =>
+                    {
+                        action(ref *x.GetDataPointer<T>(),
+                               ref x);
+                    });
+                }
+                else
+                {
+                    var iterator = CHookIterator<CObject>.GetIterator(tableCount, x => x.HasDataOf(index));
+                    var next = iterator.Next;
+                    while (next != null)
+                    {
+                        action(ref *next->GetDataPointer<T>(),
+                               ref *next);
+                        next = iterator.Next;
+                    }
+                }
             }
 
             public static void IterateWithObject<T, U>(RefRefObject<T, U, CObject> action, bool mutli_threaded = false) where T : unmanaged where U : unmanaged
             {
-                var index = LookupTable.GetDataTableIndex<T>();
-                var index2 = LookupTable.GetDataTableIndex<U>();
+                var index = CLookupTable.GetDataTableIndex<T>();
+                var index2 = CLookupTable.GetDataTableIndex<U>();
 
-                var tableCount = LookupTable.GetDataTable<T>()->TotalHookCount();
-                var tableCount2 = LookupTable.GetDataTable<U>()->TotalHookCount();
+                var tableCount = CLookupTable.GetDataTable<T>()->TotalHookCount();
+                var tableCount2 = CLookupTable.GetDataTable<U>()->TotalHookCount();
 
                 var size = Math.Min(tableCount, tableCount2);
 
                 if(mutli_threaded)
                 {
-                    var iterator = ParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    var iterator = CParallelHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
                     iterator.Start(x =>
                     {
                         action(ref *x.GetDataPointer<T>(),
@@ -1587,7 +1262,7 @@ namespace ECS
                 }
                 else
                 {
-                    var iterator = HookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
+                    var iterator = CHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
                     var next = iterator.Next;
                     while (next != null)
                     {
@@ -1598,48 +1273,45 @@ namespace ECS
                     }
                 }
             }
-            
-            public static void IgnoreCollisions<T>() where T : unmanaged => ignoredCollisions.Add(LookupTable.GetDataTableIndex<T>());
             private struct CollisionCache
             {
                 public bool IsSet;
                 public int TransformIndex;
-                public Hook* TransformHook;
+                public CHook* TransformHook;
                 public int ColliderIndex;
-                public Hook* ColliderHook;
+                public CHook* ColliderHook;
                 public Predicate<CObject> UniversalCheck;
             }
             private static CollisionCache CCache = new CollisionCache();
             public static void PossibleCollisionQuery()
             {
-                //PossibleCollisionsThisFrame.Clear();
 
                 if(!CCache.IsSet)
                 {
                     CCache.IsSet = true;
-                    CCache.TransformIndex = LookupTable.GetDataTableIndex<Transform>();
-                    CCache.TransformHook = LookupTable.GetDataTableFromIndex(CCache.TransformIndex);
-                    CCache.ColliderIndex = LookupTable.GetDataTableIndex<Collider>();
-                    CCache.ColliderHook = LookupTable.GetDataTableFromIndex(CCache.ColliderIndex);
+                    CCache.TransformIndex = CLookupTable.GetDataTableIndex<CTransform>();
+                    CCache.TransformHook = CLookupTable.GetDataTableFromIndex(CCache.TransformIndex);
+                    CCache.ColliderIndex = CLookupTable.GetDataTableIndex<CCollider>();
+                    CCache.ColliderHook = CLookupTable.GetDataTableFromIndex(CCache.ColliderIndex);
                     CCache.UniversalCheck = x => x.HasDataOf(CCache.TransformIndex) && x.HasDataOf(CCache.ColliderIndex);
                 }
 
                 var tableCount = 0;
                 var tableCount2 = 0;
-                fixed (Hook** hookPtr = &CCache.TransformHook)
+                fixed (CHook** hookPtr = &CCache.TransformHook)
                 {
                      tableCount = (*hookPtr)->TotalHookCount();
                 }
-                fixed(Hook** hookPtr = &CCache.ColliderHook)
+                fixed(CHook** hookPtr = &CCache.ColliderHook)
                 {
                     tableCount2 = ( *hookPtr )->TotalHookCount();
                 }
                 var size = Math.Min(tableCount, tableCount2);
-                var iterator = HookIterator<CObject>.GetIterator(size, CCache.UniversalCheck);
+                var iterator = CHookIterator<CObject>.GetIterator(size, CCache.UniversalCheck);
                 var next = iterator.Next;
                 while (next != null)
                 {
-                    var collider = next->GetDataPointer<Collider>();
+                    var collider = next->GetDataPointer<CCollider>();
                     if (!collider->IsInTree)
                     {
                         Tree->InsertObject(next);
@@ -1649,101 +1321,9 @@ namespace ECS
                     {
                         Tree->UpdateObject(next);
                     }
-                    collider->CollisionsThisFrame = 0;
                     next = iterator.Next;
                 }
-                // Return collisions
-                var originalSize = size;
-
-                for(int i = ignoredCollisions.Count == 0 ? -1 : 0; i < ignoredCollisions.Count; i++)
-                {
-                    Predicate<CObject> check;
-
-                    if (i != -1)
-                    {
-                        size = originalSize - LookupTable.GetDataTableFromIndex(ignoredCollisions[i])->TotalHookCount();
-                        check = x => x.HasDataOf(CCache.TransformIndex) && x.HasDataOf(CCache.ColliderIndex) && !x.HasDataOf(ignoredCollisions[i]);
-                    }
-                    else
-                        check = CCache.UniversalCheck;
-
-                    /*
-                    iterator = HookIterator<CObject>.GetIterator(size, check);
-
-                    next = iterator.Next;
-                    while (next != null)
-                    {
-                        if (Tree->QueryOverlaps(next) is List<CObject> list && list.Count > 0)
-                            PossibleCollisionsThisFrame.Add(*next, list);
-                        next = iterator.Next;
-                    }
-                    */
-
-                    var paraIterator = ParallelHookIterator<CObject>.GetIterator(size, check);
-                    paraIterator.Start(x =>
-                    {
-                        /*
-                        if (Tree->QueryOverlaps(x) is List<CObject> list && list.Count > 0)
-                        {
-                            lock(PossibleCollisionsThisFrame)
-                            {
-                                PossibleCollisionsThisFrame.Add(x, list);
-                            }
-                        }*/
-                        x.GetDataPointer<Collider>()->CollisionsThisFrame = Tree->QueryOverlapCount(x);
-                    });
-
-/*#if DEBUG
-                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Possible Collision Count", PossibleCollisionsThisFrame.Count.ToString());
-#endif*/
-    }
             }
-            /*
-            public static void VerifyCollisions(bool physics_enabled)
-            {
-                if (PossibleCollisionsThisFrame.Count == 0)
-                    return;
-                VerifiedCollisionsThisFrame.Clear();
-                var delta = CTime.DeltaTime;
-                foreach(var cObject in PossibleCollisionsThisFrame.Keys)
-                {
-                    var list = PossibleCollisionsThisFrame[cObject];
-                    var transform = cObject.GetDataPointer<Transform>();
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        if (!list[i].IsInternalAlive)
-                            continue;
-
-                        var other = list[i].GetDataPointer<Transform>();
-                        if (list[i].IsInternalAlive && transform->ExpensiveIntersection(other))
-                        {
-                            if (VerifiedCollisionsThisFrame.ContainsKey(cObject))
-                            {
-                                VerifiedCollisionsThisFrame[cObject].Add(list[i]);
-                            }
-                            else
-                            {
-                                VerifiedCollisionsThisFrame.Add(cObject, new List<CObject> { list[i] });
-                            }
-
-                            if (physics_enabled)
-                            {
-                                throw new NotImplementedException();
-
-                                // Get physics body and velocity
-                                
-                                //if (list[i].ID == 6) // test condition, objects are "applied force to" twice leading to 0'd velocities
-                                //{
-                                //    continue;
-                                //}
-
-                                //var thisBody = cObject.GetDataPointer<PhysicsBody>();
-                                //var otherBody = list[i].GetDataPointer<PhysicsBody>();
-                            }
-                        }
-                    }
-                }
-            }*/
         }
         internal struct Textures
         {
@@ -1760,27 +1340,27 @@ namespace ECS
             }
             public static IntPtr FindTexture(int hashCode)
             {
-                var entry = TextureTablePtr->FindRef((in TextureEntry x) => x.HashCode == hashCode);
+                var entry = TextureTablePtr->FindRef((in CTextureEntry x) => x.HashCode == hashCode);
                 if (entry == null)
                     return IntPtr.Zero;
                 return (IntPtr)entry;
             }
             public static IntPtr NewTexture(string filename)
             {
-                var index = TextureTablePtr->AddNew(TextureEntry.NewSprite(filename));
-                return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
+                var index = TextureTablePtr->AddNew(CTextureEntry.NewSprite(filename));
+                return (IntPtr)TextureTablePtr->GetRef<CTextureEntry>(index);
             }
             public static IntPtr NewSpriteSheet(string filename, Vector2u individualSpriteSize)
             {
-                var index = TextureTablePtr->AddNew(TextureEntry.NewSpriteSheet(filename, individualSpriteSize));
-                return (IntPtr)TextureTablePtr->GetRef<TextureEntry>(index);
+                var index = TextureTablePtr->AddNew(CTextureEntry.NewSpriteSheet(filename, individualSpriteSize));
+                return (IntPtr)TextureTablePtr->GetRef<CTextureEntry>(index);
             }
             public static IntRect GetSpriteRectFromSheet(string filename, int index)
             {
                 var entry = FindTexture(filename);
                 if (entry == IntPtr.Zero)
                     return new IntRect();
-                return ((TextureEntry*)entry)->SheetInfo.GetTextureRectAtIndex(index);
+                return ((CTextureEntry*)entry)->SheetInfo.GetTextureRectAtIndex(index);
             }
         }
         internal struct Animations
@@ -1798,18 +1378,18 @@ namespace ECS
             }
             public static IntPtr FindAnimation(int hashCode, uint frame_count)
             {
-                var entry = AnimationTablePtr->FindRef((in AnimationEntry x) => x.HashCode == hashCode && x.FrameCount == frame_count);
+                var entry = AnimationTablePtr->FindRef((in CAnimationEntry x) => x.HashCode == hashCode && x.FrameCount == frame_count);
                 if (entry == null)
                     return IntPtr.Zero;
                 return (IntPtr)entry;
             }
             public static IntPtr NewAnimation(string filename, uint frame_count)
             {
-                var index = AnimationTablePtr->AddNew(new AnimationEntry(filename, frame_count));
-                return (IntPtr)AnimationTablePtr->GetRef<AnimationEntry>(index);
+                var index = AnimationTablePtr->AddNew(new CAnimationEntry(filename, frame_count));
+                return (IntPtr)AnimationTablePtr->GetRef<CAnimationEntry>(index);
             }
         }
-        internal struct MetaData : IDisposable
+        internal struct CMetaData : IDisposable
         {
             public int MaxSize;
             public CTuple<int, IntPtr> DataPtr;
@@ -1870,16 +1450,15 @@ namespace ECS
                 var bytes = sizeof(int) + ( sizeof(CTuple<int, IntPtr>) * size );
                 var ptr = Malloc(bytes);
                 MemSet(ptr, 0, bytes);
-                var metaSlot = new MetaData()
+                var metaSlot = new CMetaData()
                 {
                     MaxSize = size
                 };
-                *(MetaData*)ptr = metaSlot;
+                *(CMetaData*)ptr = metaSlot;
                 return ptr;
             }
             public void Dispose()
             {
-                //throw new NotImplementedException();
                 fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
                 {
                     for(int i = DataTableStartIndex; i < this.MaxSize - 1; i++)
@@ -1887,7 +1466,7 @@ namespace ECS
                         var tuple = *( ptrPtr + i );
                         if(tuple.Item2 != IntPtr.Zero)
                         {
-                            var table = LookupTable.GetDataTableFromIndex(i);
+                            var table = CLookupTable.GetDataTableFromIndex(i);
                             table->ByteRemovalAt(tuple.Item1);
                         }
                     }
@@ -1931,7 +1510,7 @@ namespace ECS.Library
             public SensorEventArgs SensorChanged = null;
             public TouchEventArgs TouchEnded = null;
         }
-        private class Multi<Args> where Args : EventArgs // might throw error on multi threads due to inputs and checks being on different threads
+        private class Multi<Args> where Args : EventArgs
         {
             private readonly List<Args> argsList = new List<Args>();
 
@@ -2009,46 +1588,62 @@ namespace ECS.Library
 
         public abstract void Initialise();
         public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false, false);
-        private void GameLoop() // might make "public virtual"
+        
+        private void GameLoop()
         {
-            var delta = CTime.DeltaTime;
-            void updateSubsystem(int i)
+            var delta = Time.DeltaTime;
+            void updateSubsystem(Subsystem system)
             {
-                var subsystem = Collection.Subsystems[i];
-                if (subsystem.IsStarted && subsystem.IsEnabled)
+                if (system == null)
+                    return;
+
+                if(system.IsStarted && system.IsEnabled)
                 {
 #if DEBUG
                     var time = DateTime.Now;
-                    subsystem.Update(delta);
+                    system.Update(delta);
                     var now = DateTime.Now;
-                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, subsystem.Name, ( now - time ).TotalMilliseconds.ToString());
+                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, system.Name, ( now - time ).TotalMilliseconds.ToString());
 #else
-                    subsystem.Update(delta);
+                    system.Update(delta);
 #endif
                 }
             }
+
+            for(var i = 0; i < Collection.ValidSubIndexes.Count; i++)
+            {
+                var subsystems = Collection.SortedSubsystems[Collection.ValidSubIndexes[i]];
+                for(var j = 0; j < subsystems.Count; j++)
+                {
 #if MULTI_THREAD_SUBSYSTEMS
-            Parallel.For(0, Collection.Subsystems.Count, i =>
-            {
-                updateSubsystem(i);
-            });
-#else
-            for (int i = 0; i < Collection.Subsystems.Count; i++)
-            {
-                updateSubsystem(i);
-            }
+                    if (subsystems[j].Parallelable)
+                    {
+                        Parallel.For(j, subsystems.Count, x =>
+                        {
+                            updateSubsystem(subsystems[x]);
+                        });
+                        break;
+                    }
 #endif
+                    updateSubsystem(subsystems[j]);
+                }
+            }
+
 #if SEPARATE_RENDER_THREAD
-            CTime.RegisterThreadContinuance(Thread.CurrentThread);
-            while (!CTime.AreOtherThreadsStillGoing(Thread.CurrentThread))
+            Time.RegisterThreadContinuance(Thread.CurrentThread);
+            while (!Time.AreOtherThreadsStillGoing(Thread.CurrentThread))
                 ;
 #endif
         }
+
+
+
         protected virtual void StartSubsystems()
         {
             foreach (var item in Collection.Subsystems)
                 if (!item.IsStarted && item.IsEnabled)
                     item.Startup();
+            Collection.SortSubsystems();
         }
         public static void Stop()
         {
@@ -2062,7 +1657,7 @@ namespace ECS.Library
             if (engineType.IsSubclassOf(typeof(Engine)))
             {
 #if SEPARATE_RENDER_THREAD
-                CTime.SetGameLoopThread(Thread.CurrentThread);
+                Time.SetGameLoopThread(Thread.CurrentThread);
 #endif
 #if DEBUG
                 Logger.Logger.CreateLogger("TempLog_" + DateTime.Now.Ticks.ToString());
@@ -2072,20 +1667,25 @@ namespace ECS.Library
 
                 Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
 
-                Collection.AddNewSubsystem<RenderSubsystem>();
-                Collection.AddNewSubsystem<UISubsystem>();
-                Collection.Subsystems[0].Startup(); // special case exception
-                Collection.Subsystems[1].Startup(); // special case exception
+                Collection.AddNewSubsystem<RenderSubsystem>(0, false);
+                Collection.AddNewSubsystem<UISubsystem>(1, false);
+
+                for(var i = 0; i < 2; i++) // special case exception
+                {
+                    Collection.Subsystems[i].Startup();
+                    Collection.ValidSubIndexes.Add(i);
+                    Collection.SortedSubsystems.Add(i, new List<Subsystem> { Collection.Subsystems[i] });
+                }
 
                 if (MainEngine.Settings.EnablePhysics)
                 {
-                    Subsystem.AddNewDataType<PhysicsBody>();
-                    Collection.AddNewSubsystem<PhysicsSubsystem>();
+                    Subsystem.AddNewDataType<CPhysicsBody>();
+                    Collection.AddNewSubsystem<PhysicsSubsystem>(10, false);
                 }
                 if (MainEngine.Settings.EnableCollisions)
-                    Subsystem.AddNewDataType<Collider>();
+                    Subsystem.AddNewDataType<CCollider>();
                 if(MainEngine.Settings.EnableAnimations)
-                    Subsystem.AddNewDataType<Animation>();
+                    Subsystem.AddNewDataType<CAnimation>();
 
                 MainEngine.Initialise();
 
@@ -2094,7 +1694,8 @@ namespace ECS.Library
 
                 Subsystem.SystemFlags.SetFlags();
 
-                while (MainEngine.ThisWindow is null && CTime.DeltaTime == 0f)
+
+                while (MainEngine.ThisWindow is null && Time.DeltaTime == 0f)
                     ;
 
                 while (MainWindow.IsOpen)
@@ -2103,7 +1704,7 @@ namespace ECS.Library
                     MainEngine.GameLoop();
                     var glnow = DateTime.Now;
                     float mpf = (float)( glnow - gltime ).TotalMilliseconds;
-                    CTime.FPS = 1000f / mpf;
+                    Time.FPS = 1000f / mpf;
 #if DEBUG
                     Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "GameLoop", mpf.ToString());
 #endif
@@ -2140,12 +1741,16 @@ namespace ECS.Library
     public static class Collection
     {
         internal static readonly List<Subsystem> Subsystems = new List<Subsystem>();
-        internal static void AddNewSubsystem<System>() where System : Subsystem
+        internal static void AddNewSubsystem<System>(int priority = 5, bool parallel = false) where System : Subsystem
         {
+            priority = Maths.Maths.Clamp(priority, 0, 10);
             var type = typeof(System);
             if (!type.IsAbstract && !Subsystems.Any(x => x.GetType() == type))
             {
-                Subsystems.Add((Subsystem)Activator.CreateInstance(type));
+                var subsystem = (Subsystem)Activator.CreateInstance(type);
+                subsystem.Priority = priority;
+                subsystem.Parallelable = parallel;
+                Subsystems.Add(subsystem);
             }
         }
         internal static void SubsystemsToTestFor(params KeyValuePair<Type, bool>[] subsystemTypes)
@@ -2160,6 +1765,44 @@ namespace ECS.Library
                 if (!kvp.Value && foundSubsystem)
                     throw new SubsystemImplementedException(type.Name);
             }
+        }
+        internal static List<int> ValidSubIndexes = new List<int>();
+        internal static readonly Dictionary<int, List<Subsystem>> SortedSubsystems = new Dictionary<int, List<Subsystem>>();
+        internal static void SortSubsystems()
+        {
+            ValidSubIndexes.Clear();
+            SortedSubsystems.Clear();
+
+            for(var i = 0; i < Subsystems.Count; i++)
+            {
+                var subsystem = Subsystems[i];
+                if(SortedSubsystems.TryGetValue(subsystem.Priority, out var subsystems))
+                    subsystems.Add(subsystem);
+                else
+                    SortedSubsystems.Add(subsystem.Priority, new List<Subsystem> { subsystem });
+
+                if (!ValidSubIndexes.Contains(subsystem.Priority))
+                    ValidSubIndexes.Add(subsystem.Priority);
+            }
+
+            ValidSubIndexes = ValidSubIndexes.OrderBy(x => x).ToList();
+
+            for(var i = 0; i < ValidSubIndexes.Count; i++)
+            {
+                var index = ValidSubIndexes[i];
+                SortedSubsystems[index] = SortedSubsystems[index].OrderBy(x => x.Parallelable).ToList();
+            }
+#if DEBUG
+            for (var i = 0; i < ValidSubIndexes.Count; i++)
+            {
+                var index = ValidSubIndexes[i];
+                Debug.Log(index);
+                foreach (var sub in SortedSubsystems[index])
+                {
+                    Debug.Log(sub.Name + " : " + sub.Parallelable);
+                }
+            }
+#endif
         }
     }
     public abstract class Subsystem
@@ -2181,16 +1824,19 @@ namespace ECS.Library
             }
         }
         internal static SubsystemFlags SystemFlags = new SubsystemFlags(true, true);
-        //public static RefObjectTable Entities => UnmanagedCSharp.Entities;
         public static void AddNewDataType<T>() where T : unmanaged
         {
-            if (SystemFlags.AddNewDataTypes) // throw on fail
-                LookupTable.AddNewDataType<T>();
+            if (SystemFlags.AddNewDataTypes)
+                CLookupTable.AddNewDataType<T>();
+            else
+                throw new DisallowedSubsystemAddFlagException(typeof(T).Name);
         }
-        public static void AddNewSubsystem<System>() where System : Subsystem
+        public static void AddNewSubsystem<System>(int priority = 5, bool parallel = false) where System : Subsystem
         {
-            if (SystemFlags.AddNewSubsystems) // throw on fail
-                Collection.AddNewSubsystem<System>();
+            if (SystemFlags.AddNewSubsystems)
+                Collection.AddNewSubsystem<System>(priority, parallel);
+            else
+                throw new DisallowedSubsystemAddFlagException(typeof(System).Name);
         }
 
         public Subsystem()
@@ -2200,6 +1846,8 @@ namespace ECS.Library
         public readonly string Name;
         public bool IsEnabled { get; set; } = true;
         public bool IsStarted { get; private set; } = false;
+        public int Priority { get; internal set; }
+        public bool Parallelable { get; internal set; }
         public abstract void Update(float deltaSeconds);
         public virtual void Startup() { IsStarted = true; }
     }
@@ -2252,7 +1900,7 @@ namespace ECS.Library
 
             Engine.MainEngine.ThisWindow = new Engine.EngineWindow(new VideoMode(Engine.MainEngine.Settings.WindowDimensions), Engine.MainEngine.Settings.WindowName, Engine.MainEngine.Settings.DesiredFrameRate);
 
-            CTime.SetRenderThread(Thread.CurrentThread);
+            Time.SetRenderThread(Thread.CurrentThread);
 
             while (Engine.MainWindow.IsOpen)
             {
@@ -2260,13 +1908,13 @@ namespace ECS.Library
                 var time = DateTime.Now;
                 lock (SyncRoot)
                 {
-                    Objects.Iterate((ref Texture texture, ref Transform transform) =>
+                    Objects.Iterate((ref CTexture texture, ref CTransform transform) =>
                     {
                         var states = new RenderStates(transform.SFMLTransform);
                         texture.Draw(Engine.MainWindow, states);
                     });
 
-                    Objects.Iterate((ref UI.Text text, ref Transform transform) =>
+                    Objects.Iterate((ref CText text, ref CTransform transform) =>
                     {
                         var states = new RenderStates(transform.SFMLTransform);
                         text.Draw(Engine.MainWindow, states);
@@ -2274,48 +1922,23 @@ namespace ECS.Library
                 }
                 Engine.MainWindow.Display();
                 Engine.MainWindow.Clear();
-                CTime.DeltaTime = (float)( ( DateTime.Now - time ).TotalSeconds );
+                Time.DeltaTime = (float)( ( DateTime.Now - time ).TotalSeconds );
 #if DEBUG
-                Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Render", ( CTime.DeltaTime * 1000 ).ToString());
+                Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Render", ( Time.DeltaTime * 1000 ).ToString());
 #endif
-                CTime.RegisterThreadContinuance(Thread.CurrentThread);
-                while (!CTime.AreOtherThreadsStillGoing(Thread.CurrentThread))
+                Time.RegisterThreadContinuance(Thread.CurrentThread);
+                while (!Time.AreOtherThreadsStillGoing(Thread.CurrentThread))
                     ;
             }
         }
 #endif
     }
-    /*
-    public sealed class BoundarySubsystem : Subsystem
-    {
-        public override void Update(float deltaSeconds)
-        {
-            Entities.Iterate((ref Transform transform) =>
-            {
-                var window = Engine.MainEngine.Settings.WindowDimensions;
-                var current_x = transform.Position.X;
-                var current_y = transform.Position.Y;
-                if (current_x < 0)
-                    current_x = 0;
-                else if (current_x > window.X)
-                    current_x = window.X;
-
-                if (current_y < 0)
-                    current_y = 0;
-                else if (current_y > window.Y)
-                    current_y = window.Y;
-
-                transform.Position = new Vector2f(current_x, current_y);
-            });
-        }
-    }
-    */
     public class PhysicsSubsystem : Subsystem
     {
         private Vector2u Window = Engine.MainEngine.Settings.WindowDimensions;
         public override void Update(float deltaSeconds)
         {
-            Objects.Iterate((ref PhysicsBody body, ref Transform transform) =>
+            Objects.Iterate((ref CPhysicsBody body, ref CTransform transform) =>
             {
                 var size = transform.Size / 2;
 
@@ -2338,39 +1961,86 @@ namespace ECS.Library
 
     public abstract class CollisionSubsystem : Subsystem
     {
-        //public virtual bool VerifyCollisions { get; protected set; } = false;
-        //public static Dictionary<CObject, List<CObject>> GetPossibleCollisions => Objects.PossibleCollisionsThisFrame;
-        //public static Dictionary<CObject, List<CObject>> GetVerifiedCollisions => Objects.VerifiedCollisionsThisFrame;
-        public List<CObject> GetCollisionsOf(CObject cObject)
+        private static readonly Func<CObject, Type[], bool> excludeTypeCheck = (x, exclude) =>
         {
-            var collider = cObject.GetData<Collider>();
-            if (collider.CollisionsThisFrame == 0)
-                return null;
+            for (var i = 0; i < exclude.Length; i++)
+            {
+                if (x.HasDataOf(exclude[i]))
+                    return false;
+            }
+            return true;
+        };
+        private static readonly Func<CObject, Type, bool> includeTypeCheck = (x, include) =>
+        {
+            return x.HasDataOf(include);
+        };
+        public List<CObject> GetCollisionsOf(CObject cObject, params Type[] exclude)
+        {
             unsafe
             {
-                return Tree->QueryOverlaps(cObject);
+                return Tree->QueryOverlaps(cObject, x =>
+                {
+                    return excludeTypeCheck(x, exclude);
+                });
+            }
+        }
+        public List<CObject> GetCollisionsOf<Include>(CObject cObject) where Include : ICData
+        {
+            unsafe
+            {
+                return Tree->QueryOverlaps(cObject, x =>
+                {
+                    return includeTypeCheck(x, typeof(Include));
+                });
+            }
+        }
+        public CObject GetFirstCollisionOf(CObject cObject, params Type[] exclude)
+        {
+            unsafe
+            {
+                return Tree->QueryFirstOverlap(cObject, x =>
+                {
+                    return excludeTypeCheck(x, exclude);
+                });
+            }
+        }
+        public CObject GetFirstCollisionOf<Include>(CObject cObject) where Include : ICData
+        {
+            unsafe
+            {
+                return Tree->QueryFirstOverlap(cObject, x =>
+                {
+                    return includeTypeCheck(x, typeof(Include));
+                });
             }
         }
         public override void Update(float deltaSeconds)
         {
             Objects.PossibleCollisionQuery();
-            /*if(VerifyCollisions)
-            {
-                Objects.VerifyCollisions(Engine.MainEngine.Settings.EnablePhysics);
-            }*/
+        }
+        public override void Startup()
+        {
+            base.Startup();
+            Priority = 9;
+            Parallelable = false;
         }
     }
 
     public abstract class AnimationSubsystem : Subsystem
     {
-        
+        public override void Startup()
+        {
+            base.Startup();
+            Priority = 8;
+            Parallelable = false;
+        }
     }
 
     public class UISubsystem : Subsystem
     {
         public override void Update(float deltaSeconds)
         {
-            Objects.Iterate((ref Button button, ref Transform transform) =>
+            Objects.Iterate((ref CButton button, ref CTransform transform) =>
             {
                 if (Input.GetMouseButtonPressed(0) && transform.BoundingBox.Contains(Input.GetMousePosition()))
                     button.Click();
@@ -2382,7 +2052,7 @@ namespace ECS.Library
 namespace ECS.Strings
 {
     using static CAllocation;
-    public unsafe struct CString : IComponentData, IDisposable, IEquatable<string>
+    public unsafe struct CString : ICData, IDisposable, IEquatable<string>
     {
         public readonly int Length;
         private IntPtr StringPtr;
@@ -2470,7 +2140,7 @@ namespace ECS.Graphics
             return anchor.GetAbsoluteFromAnchor() + position;
         }
     }
-    public struct Transform : IComponentData
+    public struct CTransform : ICData
     {
         public Anchor Anchor
         {
@@ -2492,7 +2162,6 @@ namespace ECS.Graphics
             set
             {
                 mySize = value;
-                //myBounds = new FloatRect(new Vector2f(), (Vector2f)value);
                 myTransformNeedUpdate = true;
                 myInverseNeedUpdate = true;
             }
@@ -2596,7 +2265,7 @@ namespace ECS.Graphics
         {
             return new FloatRect(0, 0, mySize.X, mySize.Y);
         }
-        public bool ExpensiveIntersection(Transform other)
+        public bool ExpensiveIntersection(CTransform other)
         {
             return GetGlobalBounds().Intersects(other.GetGlobalBounds());
         }
@@ -2604,18 +2273,17 @@ namespace ECS.Graphics
         {
             return myAnchor.GetRelativePositionToAnchor(myPosition);
         }
-        internal unsafe bool ExpensiveIntersection(Transform* other)
+        internal unsafe bool ExpensiveIntersection(CTransform* other)
         {
             return GetGlobalBounds().Intersects(other->GetGlobalBounds());
         }
-        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation, Anchor anchor) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, anchor) { }
-        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, Anchor.TOP_LEFT) { }
-        public Transform(float x, float y, uint height, uint width, float origin_x, float origin_y) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), 0, Anchor.TOP_LEFT) { }
-        public Transform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(height, width) / 2, 0, Anchor.TOP_LEFT) { }
-        public Transform(Vector2f position, Vector2u size, Vector2f origin, float rotation, Anchor anchor)
+        public CTransform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation, Anchor anchor) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, anchor) { }
+        public CTransform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, Anchor.TOP_LEFT) { }
+        public CTransform(float x, float y, uint height, uint width, float origin_x, float origin_y) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), 0, Anchor.TOP_LEFT) { }
+        public CTransform(float x, float y, uint height, uint width) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(height, width) / 2, 0, Anchor.TOP_LEFT) { }
+        public CTransform(Vector2f position, Vector2u size, Vector2f origin, float rotation, Anchor anchor)
         {
             mySize = size;
-            //myBounds = new FloatRect(new Vector2f(), (Vector2f)size);
             myOrigin = origin;
             myPosition = position;
             myRotation = rotation;
@@ -2628,26 +2296,26 @@ namespace ECS.Graphics
         }
         public AABB BoundingBox => new AABB(Position.X - myOrigin.X, Position.Y - myOrigin.Y, Position.X + mySize.X - myOrigin.X, Position.Y + mySize.Y - myOrigin.Y);
         private Vector2u mySize;
-        private Vector2f myOrigin;// = new Vector2f(0, 0);
-        private Vector2f myPosition;// = new Vector2f(0, 0);
-        private float myRotation;// = 0;
-        private Vector2f myScale;// = new Vector2f(1, 1);
+        private Vector2f myOrigin;
+        private Vector2f myPosition;
+        private float myRotation;
+        private Vector2f myScale;
         private SFMLTransform myTransform;
         private SFMLTransform myInverseTransform;
-        private bool myTransformNeedUpdate;// = true;
-        private bool myInverseNeedUpdate;// = true;
+        private bool myTransformNeedUpdate;
+        private bool myInverseNeedUpdate;
         private Anchor myAnchor;
     }
-    public unsafe struct Texture : Drawable, IComponentData
+    public unsafe struct CTexture : Drawable, ICData
     {
-        public static readonly Texture Null = new Texture();
+        public static readonly CTexture Null = new CTexture();
 
         internal int Index;
         internal bool ShouldDraw;
         internal Vertex4 Vertices;
         internal IntPtr TexturePtr;
-        internal TextureEntry* Entry => (TextureEntry*)TexturePtr;
-        public Texture(FilePath filename)
+        internal CTextureEntry* Entry => (CTextureEntry*)TexturePtr;
+        public CTexture(FilePath filename)
         {
             TexturePtr = Textures.TryAddTexture(filename);
             Vertices = new Vertex4();
@@ -2655,9 +2323,9 @@ namespace ECS.Graphics
             Index = -1;
             UpdateTexture(TexturePtr);
         }
-        public static Texture CreateSpriteSheet(FilePath filename, Vector2u spriteSize)
+        public static CTexture CreateSpriteSheet(FilePath filename, Vector2u spriteSize)
         {
-            var texture = new Texture()
+            var texture = new CTexture()
             {
                 TexturePtr = Textures.NewSpriteSheet(filename, spriteSize),
                 Vertices = new Vertex4(),
@@ -2682,7 +2350,7 @@ namespace ECS.Graphics
             {
                 this.Index = index;
                 this.TexturePtr = texture;
-                var size = Entry->SheetInfo.IndividualSpriteSize;//Info.SpriteSize;
+                var size = Entry->SheetInfo.IndividualSpriteSize;
                 var rect = Entry->SheetInfo.GetTextureRectAtIndex(index);
                 var right = rect.Left + rect.Width;
                 var bottom = rect.Top + rect.Height;
@@ -2692,13 +2360,13 @@ namespace ECS.Graphics
                 Vertices.Vertex3 = new Vertex(new Vector2f(size.X, size.Y), Color.White, new Vector2f(right, bottom));
             }
         }
-        public Texture GetSpriteFromSheet(int index)
+        public CTexture GetSpriteFromSheet(int index)
         {
             var _this = this;
             _this.UpdateTexture(TexturePtr, index);
             return _this;
         }
-        public Texture CalculateShouldDraw(AABB _this, AABB other)
+        public CTexture CalculateShouldDraw(AABB _this, AABB other)
         {
             var texture = this;
             texture.ShouldDraw = other.Overlaps(_this);
@@ -2711,9 +2379,9 @@ namespace ECS.Graphics
             Vertices.Vertex2.Color = color;
             Vertices.Vertex3.Color = color;
         }
-        public Texture SetModifiedTextureColor(Color color)
+        public CTexture Modify(Ref<CTexture> modifyAction)
         {
-            this.SetColor(color);
+            modifyAction(ref this);
             return this;
         }
         public Vector2u GetSize => Entry->SheetInfo.IndividualSpriteSize;
@@ -2792,6 +2460,7 @@ namespace ECS.Maths
         public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
         public static float Clamp(float value, float min, float max) => value < min ? min : value > max ? max : value;
+        public static int Clamp(int value, int min, int max) => value < min ? min : value > max ? max : value;
     }
 
 }
@@ -2887,7 +2556,6 @@ namespace ECS.Collections
                 Free(Items);
             }
         }
-        // Need to optimise dictionary lookup
         public struct LocalDictionary<T, U> : IDisposable where T : unmanaged where U : unmanaged
         {
             private struct Entry
@@ -2960,22 +2628,21 @@ namespace ECS.Physics
 {
     public static class Physics
     {
-        public static void ApplyForce(ref this PhysicsBody body, Vector2f direction)
+        public static void ApplyForce(ref this CPhysicsBody body, Vector2f direction)
         {
             body.Velocity += direction;
         }
     }
-    public struct PhysicsBody : IComponentData
+    public struct CPhysicsBody : ICData
     {
         public static readonly Vector2f ConstantAcceleration = new Vector2f(1, 1);
 
         public Vector2f Velocity;
         public Vector2f Acceleration;
     }
-    public struct Collider : IComponentData
+    public struct CCollider : ICData
     {
         public bool IsInTree;
-        public int CollisionsThisFrame;
     }
 }
 namespace ECS.Collision
@@ -3103,8 +2770,6 @@ namespace ECS.Collision
             
             if (nextFreeNodeIndex == AABBNode.NULL_NODE)
             {
-                //assert(_allocatedNodeCount == _nodeCapacity);
-
                 nodeCapacity += growthSize;
                 nodes.Resize(nodeCapacity);
                 map.Resize(nodeCapacity);
@@ -3139,11 +2804,6 @@ namespace ECS.Collision
 
         private void insertLeaf(int leafNodeIndex)
         {
-            // make sure we're inserting a new leaf
-            //assert(_nodes[leafNodeIndex].parentNodeIndex == AABB_NULL_NODE);
-            //assert(_nodes[leafNodeIndex].leftNodeIndex == AABB_NULL_NODE);
-            //assert(_nodes[leafNodeIndex].rightNodeIndex == AABB_NULL_NODE);
-
             // if the tree is empty then we make the root the leaf
             if (rootNodeIndex == AABBNode.NULL_NODE)
             {
@@ -3333,15 +2993,11 @@ namespace ECS.Collision
             int nodeIndex = allocateNode();
             AABBNode* node = nodes.ReadPointerAt(nodeIndex);
 
-            node->AssociatedAABB = cObject->Meta->Get<Transform>(transformDataTableIndex)->BoundingBox;//cObject->GetDataPointer<Transform>()->BoundingBox;
+            node->AssociatedAABB = cObject->Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox;//cObject->GetDataPointer<Transform>()->BoundingBox;
             node->ObjectPointer = cObject;
 
             insertLeaf(nodeIndex);
             map[cObject->ID] = nodeIndex;
-
-            //Console.WriteLine(nodeIndex);
-            //Console.WriteLine(cObject->ID);
-            //Console.WriteLine(map[cObject->ID]);
         }
         public void RemoveObject(CObject* cObject)
         {
@@ -3354,13 +3010,12 @@ namespace ECS.Collision
         public void UpdateObject(CObject* cObject)
         {
             int nodeIndex = map[cObject->ID];
-            updateLeaf(nodeIndex, cObject->Meta->Get<Transform>(transformDataTableIndex)->BoundingBox);
+            updateLeaf(nodeIndex, cObject->Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox);
         }
-        public int QueryOverlapCount(CObject cObject)
+        public CObject QueryFirstOverlap(CObject cObject, Func<CObject, bool> additionalPredicate = null)
         {
-            int count = 0;
             Stack<int> stack = new Stack<int>();
-            AABB testAabb = cObject.Meta->Get<Transform>(transformDataTableIndex)->BoundingBox;
+            AABB testAabb = cObject.Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox;
             stack.Push(rootNodeIndex);
             while (stack.Count != 0)
             {
@@ -3373,9 +3028,11 @@ namespace ECS.Collision
 
                 if (node->AssociatedAABB.Overlaps(testAabb))
                 {
-                    if (node->IsLeaf() && !node->ObjectPointer->Equals(cObject))
+                    if (node->IsLeaf() && !node->ObjectPointer->IsNull && !node->ObjectPointer->Equals(cObject))
                     {
-                        count++;
+                        var cobject = *node->ObjectPointer;
+                        if (additionalPredicate(cobject))
+                            return cobject;
                     }
                     else
                     {
@@ -3384,13 +3041,14 @@ namespace ECS.Collision
                     }
                 }
             }
-            return count;
+
+            return CObject.Null;
         }
-        public List<CObject> QueryOverlaps(CObject cObject)
+        public List<CObject> QueryOverlaps(CObject cObject, Func<CObject, bool> additionalPredicate = null)
         {
             List<CObject> overlaps = new List<CObject>();
             Stack<int> stack = new Stack<int>();
-            AABB testAabb = cObject.Meta->Get<Transform>(transformDataTableIndex)->BoundingBox;
+            AABB testAabb = cObject.Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox;
             stack.Push(rootNodeIndex);
             while (stack.Count != 0)
             {
@@ -3403,7 +3061,7 @@ namespace ECS.Collision
 
                 if (node->AssociatedAABB.Overlaps(testAabb))
                 {
-                    if (node->IsLeaf() && !node->ObjectPointer->Equals(cObject))
+                    if (node->IsLeaf() && !node->ObjectPointer->IsNull && !node->ObjectPointer->Equals(cObject))
                     {
                         overlaps.Add(*node->ObjectPointer);
                     }
@@ -3414,24 +3072,19 @@ namespace ECS.Collision
                     }
                 }
             }
+
+            if (additionalPredicate != null)
+                overlaps = overlaps.Where(additionalPredicate).ToList();
+
             return overlaps;
         }
-        public List<CObject> QueryOverlaps(CObject* cObject)
-        {
-            return QueryOverlaps(*cObject);
-        }
-        public int QueryOverlapCount(CObject* cObject)
-        {
-            return QueryOverlapCount(*cObject);
-        }
-
         public void Dispose()
         {
             for(int i = 0; i < nodes.MaxSize; i++)
             {
                 if(nodes[i].ObjectPointer != null && nodes[i].ObjectPointer->IsInternalAlive)
                 {
-                    Collider* collider = nodes[i].ObjectPointer->GetDataPointer<Collider>();
+                    CCollider* collider = nodes[i].ObjectPointer->GetDataPointer<CCollider>();
                     collider->IsInTree = false;
                 }
             }
@@ -3476,10 +3129,10 @@ namespace ECS.UI
 {
     using static ECS.Collections.Generic;
     using static SFML.Graphics.RenderWindow;
-    public struct Button : IComponentData
+    public struct CButton : ICData
     {
         private CDelegate OnClick;
-        public Button(Action action)
+        public CButton(Action action)
         {
             OnClick = CDelegate.New(action);
         }
@@ -3488,15 +3141,15 @@ namespace ECS.UI
             OnClick.Invoke<Action>();
         }
     }
-    public struct Text : Drawable, IComponentData
+    public struct CText : Drawable, ICData
     {
         private CString String;
         private uint CharacterSize;
-        private Font Font;
+        private CFont Font;
         private Color Color;
         private LocalArray<Vertex> vertices;
         private bool needsUpdate;
-        public Text(string text, Font font, uint size = 15)
+        public CText(string text, CFont font, uint size = 15)
         {
             String = new CString(text);
             Font = font;
@@ -3577,89 +3230,51 @@ namespace ECS.UI
         }
     }
     
-    public struct Font
+    public struct CFont
     {
-        public IntPtr CFont;
-        public Font(FilePath filename)
+        public IntPtr sfmlFont;
+        public CFont(FilePath filename)
         {
-            CFont = SFML.Graphics.Font.sfFont_createFromFile(filename);
+            sfmlFont = Font.sfFont_createFromFile(filename);
         }
         public Glyph GetGlyph(uint characterCode, uint characterSize)
         {
-            return SFML.Graphics.Font.sfFont_getGlyph(CFont, characterCode, characterSize, false, 0f);
+            return Font.sfFont_getGlyph(sfmlFont, characterCode, characterSize, false, 0f);
         }
         public IntPtr GetTexture(uint characterSize)
         {
-            return SFML.Graphics.Font.sfFont_getTexture(CFont, characterSize);
+            return Font.sfFont_getTexture(sfmlFont, characterSize);
         }
         public float GetKerning(uint previousChar, uint nextChar, uint characterSize)
         {
-            return SFML.Graphics.Font.sfFont_getKerning(CFont, previousChar, nextChar, characterSize);
+            return Font.sfFont_getKerning(sfmlFont, previousChar, nextChar, characterSize);
         }
     }
 }
 namespace ECS.Animations
 {
     using static UnmanagedCSharp;
-    /*public unsafe struct Animation : IComponentData
-    {
-        private struct AnimState
-        {
-            public IntPtr Entry;
-            public int Index;
-            public AnimState(IntPtr ptr, int index)
-            {
-                Entry = ptr;
-                Index = index;
-            }
-        }
-        public uint FrameCount;
-        public IntPtr Frames;
-        public Animation(uint frameCount)
-        {
-            FrameCount = frameCount;
-            Frames = Malloc((int)(sizeof(AnimState) * frameCount));
-            MemSet(Frames, 0, (int)(sizeof(AnimState) * frameCount));
-        }
-        public void SetAnimationFrameTo(int index, Texture texture)
-        {
-            if (index < 0 || index >= FrameCount)
-                throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
-            fixed(IntPtr* pFrames = &Frames)
-            {
-                var anim = (AnimState*)*pFrames;
-                *( anim + index ) = new AnimState(texture.TexturePtr, index);
-            }
-        }
-        public void SetAnimationFrameOf(int index, ref Texture texture)
-        {
-            if (index < 0 || index >= FrameCount)
-                throw new IndexInvalidException("an animations' frames", index, 0, (int)FrameCount);
-            fixed (IntPtr* pFrames = &Frames)
-            {
-                var anim = ((AnimState*)*pFrames) + index;
-                if (texture.TexturePtr == anim->Entry && texture.Index == anim->Index)
-                    return;
-                texture.TexturePtr = anim->Entry;
-                texture.Index = anim->Index;
-                texture.UpdateRectOnly();
-            }
-        }
-    }*/
-    public unsafe struct Animation : IComponentData
+    public unsafe struct CAnimation : ICData
     {
         private IntPtr internalEntry;
-        private AnimationEntry* Entry => (AnimationEntry*)internalEntry;
+        internal CAnimationEntry.AnimState animState;
+
+        private CAnimationEntry* Entry => (CAnimationEntry*)internalEntry;
         public uint FrameCount => Entry->FrameCount;
-        public Animation(string name, uint frame_count)
+        public CAnimation(string name, uint frame_count)
         {
             internalEntry = Animations.TryAddAnimation(name, frame_count);
+            animState = CAnimationEntry.AnimState.Null;
         }
-        public void SetTextureDataTo(int index, ref Texture texture)
+
+        public void SetTextureDataTo(int index, ref CTexture texture)
         {
-            Entry->GetFrame(index, ref texture);
+            if (animState.Index == index && animState.Entry == texture.TexturePtr)
+                return;
+
+            Entry->SetTexture(index, ref texture, ref this);
         }
-        public void SetFrameDataTo(int index, ref Texture texture)
+        public void SetFrameDataTo(int index, ref CTexture texture)
         {
             Entry->SetFrame(index, ref texture);
         }
@@ -3690,8 +3305,10 @@ namespace ECS.Exceptions
     {
         public CoreException(string message) : base(message + "\nEngine core invalidated.")
         {
+#if DEBUG
             Logger.Instance.AddLog(LogKey.Error, GetType().Name, message.Where(x => x != '\n').ToIString());
             Logger.Instance.WriteAllLogs();
+#endif
         }
     }
     public class IncompatibleTypeException : CoreException
@@ -3761,7 +3378,6 @@ namespace ECS.Exceptions
     }
     public class MissingReferenceException : PointerException
     {
-        //public MissingReferenceException() : base("The object was already destroyed and this wrapper is no longer valid.") { }
         public MissingReferenceException() : base("The object was already destroyed and this reference is no longer valid.") { }
     }
     public class TextureNotFoundException : TextureException
@@ -3779,6 +3395,10 @@ namespace ECS.Exceptions
     public class SubsystemImplementedException : SubsystemException
     {
         public SubsystemImplementedException(string subSystemName) : base(string.Format("An implementation of the {0} subsystem was provided despite the Engine settings not requiring one.", subSystemName)) { }
+    }
+    public class DisallowedSubsystemAddFlagException : SubsystemException
+    {
+        public DisallowedSubsystemAddFlagException(string name) : base(string.Format("The subsystem flags are already set, you are not allowed to add: {0}", name)) { }
     }
     public class RenderThreadAlreadyExistsException : ThreadException
     {
@@ -3830,33 +3450,6 @@ namespace ECS.Logger
                 }
             }
         }
-        /*
-        public IEnumerable<LogItem> ReadAllLogs(bool includeCurrentOnes = false)
-        {
-            lock (SyncRoot)
-            {
-                foreach (var item in File.ReadAllLines(GetFileLocation()))
-                {
-                    yield return LogItem.FromString(item);
-                }
-                if (includeCurrentOnes)
-                {
-                    foreach (var item in Logs)
-                    {
-                        yield return LogItem.FromString(item);
-                    }
-                }
-            }
-        }
-
-        public void PrintAllLogs()
-        {
-            foreach (var item in ReadAllLogs())
-            {
-                Console.WriteLine(item.ToHumanReadable());
-            }
-        }
-        */
         private Logger(string filename, bool relativeFileName = true, bool deleteOld = true)
         {
             LogFileName = filename;
@@ -3896,18 +3489,34 @@ namespace ECS.Logger
                     Console.WriteLine(file.Replace(path, ""));
                     var logger = new Logger(Path.GetFileNameWithoutExtension(file), inCurrentDirectory, false);
                     var averages = new Dictionary<string, List<float>>();
+                    var lowests = new Dictionary<string, float>();
+                    var highests = new Dictionary<string, float>();
                     foreach(var item in logger.Logs)
                     {
                         var logItem = LogItem.FromString(item);
-                        if(logItem.Key == LogKey.StatisticsLog)
+                        if (logItem.Key == LogKey.StatisticsLog)
                         {
+                            var float_val = Convert.ToSingle(logItem.Value);
+
+                            if (!lowests.ContainsKey(logItem.Name))
+                                lowests.Add(logItem.Name, float.PositiveInfinity);
+                            else if (lowests[logItem.Name] > float_val)
+                                lowests[logItem.Name] = float_val;
+
+
+                            if (!highests.ContainsKey(logItem.Name))
+                                highests.Add(logItem.Name, float.NegativeInfinity);
+                            else if (highests[logItem.Name] < float_val)
+                                highests[logItem.Name] = float_val;
+
                             if (averages.ContainsKey(logItem.Name))
-                                averages[logItem.Name].Add(Convert.ToSingle(logItem.Value));
+                                averages[logItem.Name].Add(float_val);
                             else
-                                averages.Add(logItem.Name, new List<float> { Convert.ToSingle(logItem.Value) });
+                                averages.Add(logItem.Name, new List<float> { float_val });
                         }
                     }
 
+                    Console.WriteLine("Averages");
                     foreach(var kvp in averages)
                     {
                         Console.Write(kvp.Key + ": ");
@@ -3916,6 +3525,11 @@ namespace ECS.Logger
                             value += item;
                         Console.WriteLine(value / kvp.Value.Count);
                     }
+
+                    Console.WriteLine("Lowests");
+                    lowests.PrintDict();
+                    Console.WriteLine("Highests");
+                    highests.PrintDict();
                     Console.WriteLine();
                 }
             }
@@ -3975,6 +3589,17 @@ namespace ECS.Logger
                 TimeStamp = Convert.ToInt64(split[1])
             };
             return item;
+        }
+    }
+    public static class LoggerExtensions
+    {
+        public static void PrintDict<Key, Value>(this Dictionary<Key, Value> dict)
+        {
+            foreach (var kvp in dict)
+            {
+                Console.Write(kvp.Key + ": ");
+                Console.WriteLine(kvp.Value);
+            }
         }
     }
 

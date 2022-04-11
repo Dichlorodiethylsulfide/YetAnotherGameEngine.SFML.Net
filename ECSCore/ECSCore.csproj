@@ -4,6 +4,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <LangVersion>8.0</LangVersion>
+    <Configurations>Debug;Release;GAME_TEST;BRUTE_FORCE_RENDERING;BRUTE_FORCE_RENDERING_DEBUG;GAME_TEST_DEBUG</Configurations>
   </PropertyGroup>
 
   <ItemGroup>
