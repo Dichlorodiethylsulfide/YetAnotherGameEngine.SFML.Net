@@ -1,4 +1,5 @@
 #define USING_ANIMATIONS
+#define MOVING_RENDERING
 #define BRUTE_FORCE_RENDERING
 
 #if GAME_TEST
@@ -15,7 +16,7 @@ using ECS.Strings;
 using ECS.Graphics;
 using ECS.Library;
 using ECS.Maths;
-using ECS.Physics;
+using ECS.Collision;
 using ECS.UI;
 using ECS.Delegates;
 
@@ -72,11 +73,14 @@ namespace Game_Example
         public static CAnimation SquareAnimation;
         public static CFont Arial;
 
+        public static int SpawnCounter = 1000;
+        private static int SqSpawnCounter => SpawnCounter * SpawnCounter;
+
 #if !GAME_TEST
-        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, false, false, 60);
+        public override EngineSettings Settings => new EngineSettings(64, (int)(SqSpawnCounter * 1.1f), (int)(SqSpawnCounter * 1.1f), 64, new Vector2u(1920, 1080), "Engine Window", false, false, false, 60);
 #else
 #if USING_ANIMATIONS
-        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, true, true, 60);
+        public override EngineSettings Settings => new EngineSettings(64, 1024, 1024, 64, new Vector2u(1920, 1080), "Engine Window", false, true, true, 60);
 #else
         public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, true, false, 60);
 #endif
@@ -102,7 +106,7 @@ namespace Game_Example
             AddNewDataType<CPlayerData>();
             AddNewDataType<CEnemyData>();
             AddNewDataType<CBulletData>();
-#elif BRUTE_FORCE_RENDERING
+#elif BRUTE_FORCE_RENDERING && MOVING_RENDERING
             AddNewSubsystem<MovementSubsystem>();
 #endif
             var startButton = CObject.New();
@@ -152,12 +156,9 @@ namespace Game_Example
 #endif
 
 #if BRUTE_FORCE_RENDERING
-            AddNewSubsystem<MovementSubsystem>();
-
-            var counter = 1000;
-            for(int y = 0; y < counter; y++)
+            for(int y = 0; y < SpawnCounter; y++)
             {
-                for(int x = 0; x < counter; x++)
+                for(int x = 0; x < SpawnCounter; x++)
                 {
                     var cObject = CObject.New();
                     cObject.AddData(new CTransform(x * 33, y * 33, 32, 32));
@@ -283,7 +284,7 @@ namespace Game_Example
     {
         public static int EnemyLimit = int.MaxValue;
         public static int EnemyCount = 0;
-        private int spawnAmount = 1;
+        private int spawnAmount = GameEngine.SpawnCounter;
         private float spawnTimer = 5f;
         private CObject PlayerObject;
         public override void Startup()
@@ -322,7 +323,7 @@ namespace Game_Example
                 var enemy = CObject.New();
                 enemy.AddData(GameEngine.SpawnTexture.Modify((ref CTexture texture) => texture.SetColor(Color.Red)));
                 enemy.AddData(new CTransform(RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.X), RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.Y), 32, 32));
-                enemy.AddData(new CEnemyData(10, 1, 50));
+                enemy.AddData(new CEnemyData(10, 0, 50));
                 enemy.AddData(new CCollider());
                 enemy.AddData(new CString("Enemy"));
 #if USING_ANIMATIONS

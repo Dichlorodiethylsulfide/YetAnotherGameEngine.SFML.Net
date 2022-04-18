@@ -17,6 +17,7 @@ using System.Reflection;
 using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 using System.Runtime;
 using System.Runtime.InteropServices;
@@ -46,9 +47,15 @@ namespace ECS
     using static UnmanagedCSharp;
     using static Maths.Maths;
     using static ECS.Collections.Generic;
+    /// <summary>
+    /// Static class used for monitoring the timing of the system.
+    /// </summary>
     public static class Time
     {
         private static readonly object TimeSyncRoot = new object();
+        /// <summary>
+        /// Synchronises threads and updates the current delta time of the engine.
+        /// </summary>
         private struct FrameTimeDelay
         {
             public float DeltaTime0;
@@ -116,6 +123,9 @@ namespace ECS
         }
         public static float FPS { get; internal set; } = 0f;
     }
+    /// <summary>
+    /// Custom class for managing string paths of resources & assets. Used in order to avoid direct use of strings.
+    /// </summary>
     public class FilePath
     {
         public string CurrentPath { get; internal set; }
@@ -125,14 +135,20 @@ namespace ECS
         public static implicit operator string(FilePath path) => path.ToString();
     }
     /// <summary>
-    /// Used for type clarity and their purpose when defining different types
+    /// Used for determining which types are supposed to represent the 'data' in the system. Data tables are created for each 'ICData' type registered.
     /// </summary>
     public interface ICData { }
+    /// <summary>
+    /// Static class for debugging information. Used primarily in connection to logging data in the console.
+    /// </summary>
     public static class Debug
     {
         public static void Log<T>(T loggable) => Console.WriteLine(loggable.ToString());
         public static void Breakpoint() => Console.WriteLine("Hit a breakpoint.");
     }
+    /// <summary>
+    /// Used to represent individual objects in the engine. These are actual game objects and not an object 'base' class.
+    /// </summary>
     public struct CObject : IEquatable<CObject>, IDisposable
     {
         private static long incrementer = 1;
@@ -310,7 +326,9 @@ namespace ECS
         public static CObject New() => Objects.AddNewObject(incrementer++);
     }
 
-
+    /// <summary>
+    /// Internal static class for allocating unmanaged data in the engine. C++ allocation or C# allocation can be used, depends on the defined preprocessor command.
+    /// </summary>
     internal static class CAllocation
     {
 #if CPP_ALLOCATION
@@ -350,6 +368,9 @@ namespace ECS
         }
 #endif
     }
+    /// <summary>
+    /// Core static class for the engine. Manages access to data tables and objects. 'using static UnmanagedCSharp;' is used to explicitly declare the use of this engine's management system.
+    /// </summary>
     public static unsafe class UnmanagedCSharp
     {
 
@@ -377,6 +398,11 @@ namespace ECS
             CLookupTable.AddNewDataType<CText>();
             Tree->transformDataTableIndex = CLookupTable.GetDataTableIndex<CTransform>();
         }
+        /// <summary>
+        /// Custom key-value pair for passing data around.
+        /// </summary>
+        /// <typeparam name="T1">Item 1's type</typeparam>
+        /// <typeparam name="T2">Item 2's type</typeparam>
         public struct CTuple<T1, T2> where T1 : unmanaged where T2 : unmanaged
         {
             public static readonly CTuple<T1, T2> Null = new CTuple<T1,T2>();
@@ -388,6 +414,9 @@ namespace ECS
                 Item2 = item2;
             }
         }
+        /// <summary>
+        /// Custom lookup table for handling access to other data tables. Only one instance can exist.
+        /// </summary>
         internal struct CLookupTable
         {
             private static readonly Dictionary<Type, int> DataTableLookup = new Dictionary<Type, int>();
@@ -493,6 +522,7 @@ namespace ECS
             }
         }
 
+        // Custom reference and lookup delegates.
         public delegate bool PredicateIn<T>(in T t);
         public delegate void Ref<T0>(ref T0 data0);
         public delegate void RefObject<T0, O0>(ref T0 data0, ref O0 object0);
@@ -501,11 +531,15 @@ namespace ECS
         public delegate void RefRefRef<T0, T1, T2>(ref T0 data0, ref T1 data1, ref T2 data2);
         public delegate void In<T0>(in T0 data0);
         public delegate bool Compare<T0>(in T0 data);
+        //
 
+        /// <summary>
+        /// Iterator type for parallel operations. Performs the same action as CHookIterator except splits the workload across multiple threads.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
         internal struct CParallelHookIterator<T> where T : unmanaged
         {
             private CHook* internalHook;
-            private int currentIndex;
             private int totalReturned;
             public int expectedLimit;
             private bool limitReached;
@@ -535,7 +569,6 @@ namespace ECS
             public void Reset()
             {
                 currentTable = internalHook->Start;
-                currentIndex = 0;
                 totalReturned = 0;
                 limitReached = expectedLimit > 0 ? false : true;
             }
@@ -544,7 +577,6 @@ namespace ECS
                 var iterator = new CParallelHookIterator<CObject>();
                 iterator.internalHook = ObjectTablePtr;
                 iterator.currentTable = iterator.internalHook->Start;
-                iterator.currentIndex = 0;
                 iterator.totalReturned = 0;
                 iterator.expectedLimit = expectedLimit;
                 iterator.limitReached = expectedLimit > 0 ? false : true;
@@ -552,6 +584,10 @@ namespace ECS
                 return iterator;
             }
         }
+        /// <summary>
+        /// Iterator for stepping through data or object tables. Checks each reference and then returns it. Combination of a for-loop and a foreach-loop. 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
         internal struct CHookIterator<T> where T : unmanaged
         {
             private CHook* internalHook;
@@ -611,7 +647,9 @@ namespace ECS
                 return iterator;
             }
         }
-
+        /// <summary>
+        /// The start point of each object or data table linked list. Provides access to all data tables containing the declared data type.
+        /// </summary>
         internal struct CHook
         {
             public int SizeOfData;
@@ -802,6 +840,9 @@ namespace ECS
                 TablePtr->Add(outer);
             }
         }
+        /// <summary>
+        /// A table node in the hook's linked list. Individual table for accessing only its own contents or for returning the next table in the list.
+        /// </summary>
         internal struct CLinkableTable
         {
             public int ReadIndex;
@@ -913,6 +954,9 @@ namespace ECS
                 return table;
             }
         }
+        /// <summary>
+        /// Unmanaged representation of sprite sheet metadata. Each sprite is represented on the sprite sheet using an index and their texture rectangle on the main texture. 
+        /// </summary>
         internal struct CSpriteSheetInfo : IDisposable
         {
             private struct IntRectIndex
@@ -964,6 +1008,9 @@ namespace ECS
                 Free(IntRects);
             }
         }
+        /// <summary>
+        /// Entry for the animation lookup table. Multiple objects with the same animation data will reference only a single/the same CAnimationEntry.
+        /// </summary>
         internal struct CAnimationEntry : IDisposable
         {
             public struct AnimState
@@ -1022,6 +1069,9 @@ namespace ECS
                 Free(Frames);
             }
         }
+        /// <summary>
+        /// Entry for the texture lookup table. Multiple objects with the same texture data will reference only a single/the same CTextureEntry.
+        /// </summary>
         internal struct CTextureEntry : IDisposable
         {
             public static readonly CTextureEntry Null = new CTextureEntry();
@@ -1058,6 +1108,9 @@ namespace ECS
                 return entry;
             }
         }
+        /// <summary>
+        /// External access to objects in the system. Gets objects, object data and allows for iteration over many objects.
+        /// </summary>
         public struct Objects
         {
             internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
@@ -1273,6 +1326,9 @@ namespace ECS
                     }
                 }
             }
+            /// <summary>
+            /// Special type for caching collision-related tables as all collision queries start out as the same function call.
+            /// </summary>
             private struct CollisionCache
             {
                 public bool IsSet;
@@ -1325,6 +1381,9 @@ namespace ECS
                 }
             }
         }
+        /// <summary>
+        /// Internal static functions for adding and finding texture entries in the texture lookup table
+        /// </summary>
         internal struct Textures
         {
             public static IntPtr TryAddTexture(string filename)
@@ -1363,6 +1422,9 @@ namespace ECS
                 return ((CTextureEntry*)entry)->SheetInfo.GetTextureRectAtIndex(index);
             }
         }
+        /// <summary>
+        /// Internal static functions for adding and finding animation entries in the animation lookup table
+        /// </summary>
         internal struct Animations
         {
             public static IntPtr TryAddAnimation(string filename, uint frame_count)
@@ -1389,6 +1451,9 @@ namespace ECS
                 return (IntPtr)AnimationTablePtr->GetRef<CAnimationEntry>(index);
             }
         }
+        /// <summary>
+        /// Provides the basis for data access for individual objects. Each object contains metadata about what types it has access to. Creates a separation between objects and their data.
+        /// </summary>
         internal struct CMetaData : IDisposable
         {
             public int MaxSize;
@@ -1479,6 +1544,9 @@ namespace ECS.Library
 {
     using static UnmanagedCSharp;
     using static Keyboard;
+    /// <summary>
+    /// Static class for managing window input. Primarily for getting and setting keystrokes and mouse presses.
+    /// </summary>
     public static class Input
     {
         private static readonly Current CurrentInput = new Current();
@@ -1490,6 +1558,9 @@ namespace ECS.Library
         public static bool GetMouseButtonPressed(Mouse.Button mouseButton) => CurrentInput.MouseButtonPressed.GetInputBool((x) => x.Button == mouseButton);
         public static bool GetKeyPressed(Key key) => CurrentInput.KeyPressed.Any(x => x.Code == key);
         public static Vector2f GetMousePosition() => (Vector2f)Mouse.GetPosition(Engine.MainWindow);
+        /// <summary>
+        /// Provides the wide range of available input methods. Not all are currently supported but they are here for later use.
+        /// </summary>
         private class Current
         {
             public JoystickButtonEventArgs JoystickButtonPressed = null;
@@ -1510,6 +1581,10 @@ namespace ECS.Library
             public SensorEventArgs SensorChanged = null;
             public TouchEventArgs TouchEnded = null;
         }
+        /// <summary>
+        /// Special type for when some input methods have simultaneous input such as keystrokes.
+        /// </summary>
+        /// <typeparam name="Args"></typeparam>
         private class Multi<Args> where Args : EventArgs
         {
             private readonly List<Args> argsList = new List<Args>();
@@ -1531,8 +1606,14 @@ namespace ECS.Library
             }
         }
     }
+    /// <summary>
+    /// Abstract, base of the Engine. This type is inherited by the user to customise their engine implementation.
+    /// </summary>
     public abstract class Engine
     {
+        /// <summary>
+        /// Provides information about the current window. This is drawn to during texture draw calls.
+        /// </summary>
         public class EngineWindow : RenderWindow
         {
             public static Vector2u WindowDimensions => MainEngine.Settings.WindowDimensions;
@@ -1583,6 +1664,9 @@ namespace ECS.Library
         internal static Engine MainEngine = null;
         internal static EngineWindow MainWindow => MainEngine?.ThisWindow;
 
+#if DEBUG
+        internal static Process EngineProcess = null;
+#endif
 
         internal EngineWindow ThisWindow = null;
 
@@ -1661,6 +1745,7 @@ namespace ECS.Library
 #endif
 #if DEBUG
                 Logger.Logger.CreateLogger("TempLog_" + DateTime.Now.Ticks.ToString());
+                EngineProcess = Process.GetCurrentProcess();
 #endif
 
                 MainEngine = (Engine)Activator.CreateInstance(engineType);
@@ -1687,7 +1772,14 @@ namespace ECS.Library
                 if(MainEngine.Settings.EnableAnimations)
                     Subsystem.AddNewDataType<CAnimation>();
 
+#if DEBUG
+                var initTime = DateTime.Now;
                 MainEngine.Initialise();
+                var initNow = DateTime.Now;
+                Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Initialisation", ((float)( initNow - initTime ).TotalMilliseconds).ToString());
+#else
+                MainEngine.Initialise();
+#endif
 
                 Collection.SubsystemsToTestFor(new KeyValuePair<Type, bool>(typeof(CollisionSubsystem), MainEngine.Settings.EnableCollisions),
                                                new KeyValuePair<Type, bool>(typeof(AnimationSubsystem), MainEngine.Settings.EnableAnimations));
@@ -1707,11 +1799,15 @@ namespace ECS.Library
                     Time.FPS = 1000f / mpf;
 #if DEBUG
                     Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "GameLoop", mpf.ToString());
+                    Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "RAM Usage (Bytes)", EngineProcess.WorkingSet64.ToString());
 #endif
                 }
             }
         }
     }
+    /// <summary>
+    /// Provides customisable information for the engine implementation.
+    /// </summary>
     public struct EngineSettings
     {
         public int MainTableSize;
@@ -1738,7 +1834,10 @@ namespace ECS.Library
             DesiredFrameRate = desiredFrameRate;
         }
     }
-    public static class Collection
+    /// <summary>
+    /// Static class for adding subsystems to the current collection. Provides sorting and testing methods for subsystems.
+    /// </summary>
+    internal static class Collection
     {
         internal static readonly List<Subsystem> Subsystems = new List<Subsystem>();
         internal static void AddNewSubsystem<System>(int priority = 5, bool parallel = false) where System : Subsystem
@@ -1805,9 +1904,15 @@ namespace ECS.Library
 #endif
         }
     }
+    /// <summary>
+    /// Abstract, base class for subsystems. This type is inherited by the user to create custom subsystem implementations.
+    /// </summary>
     public abstract class Subsystem
     {
         internal static readonly object SyncRoot = new object();
+        /// <summary>
+        /// Internal global flags to stop the user adding new data types or subsystems after engine initialisation.
+        /// </summary>
         internal struct SubsystemFlags
         {
             public bool AddNewDataTypes;
@@ -1851,7 +1956,9 @@ namespace ECS.Library
         public abstract void Update(float deltaSeconds);
         public virtual void Startup() { IsStarted = true; }
     }
-
+    /// <summary>
+    /// Special case subsystem used for rendering textures to the current RenderWindow. Locks the subsystem sync root when drawing to prevent invalid draws.
+    /// </summary>
     public sealed class RenderSubsystem : Subsystem
     {
 #if SEPARATE_RENDER_THREAD
@@ -1922,9 +2029,11 @@ namespace ECS.Library
                 }
                 Engine.MainWindow.Display();
                 Engine.MainWindow.Clear();
+
                 Time.DeltaTime = (float)( ( DateTime.Now - time ).TotalSeconds );
 #if DEBUG
                 Logger.Logger.Instance.AddLog(LogKey.StatisticsLog, "Render", ( Time.DeltaTime * 1000 ).ToString());
+
 #endif
                 Time.RegisterThreadContinuance(Thread.CurrentThread);
                 while (!Time.AreOtherThreadsStillGoing(Thread.CurrentThread))
@@ -1932,7 +2041,10 @@ namespace ECS.Library
             }
         }
 #endif
-    }
+            }
+    /// <summary>
+    /// Showcase subsystem, not currently used in examples, primarily used for testing physics implementations.
+    /// </summary>
     public class PhysicsSubsystem : Subsystem
     {
         private Vector2u Window = Engine.MainEngine.Settings.WindowDimensions;
@@ -1958,7 +2070,9 @@ namespace ECS.Library
             });
         }
     }
-
+    /// <summary>
+    /// Abstract class for collision subsystems. This type is inherited by the user for creating a custom collision subsystem.
+    /// </summary>
     public abstract class CollisionSubsystem : Subsystem
     {
         private static readonly Func<CObject, Type[], bool> excludeTypeCheck = (x, exclude) =>
@@ -2025,7 +2139,9 @@ namespace ECS.Library
             Parallelable = false;
         }
     }
-
+    /// <summary>
+    /// Abstract class for animation subsystems. This type is inherited by the user for creating a custom animation subsystem.
+    /// </summary>
     public abstract class AnimationSubsystem : Subsystem
     {
         public override void Startup()
@@ -2035,7 +2151,9 @@ namespace ECS.Library
             Parallelable = false;
         }
     }
-
+    /// <summary>
+    /// Used to intercept UI events. Primarily to report buttons are clicked. This is a standalone type and does not need to be inherited.
+    /// </summary>
     public class UISubsystem : Subsystem
     {
         public override void Update(float deltaSeconds)
@@ -2052,6 +2170,9 @@ namespace ECS.Library
 namespace ECS.Strings
 {
     using static CAllocation;
+    /// <summary>
+    /// Custom type for creating and using strings in unmanaged environments. Primarily for storing text to be drawn later.
+    /// </summary>
     public unsafe struct CString : ICData, IDisposable, IEquatable<string>
     {
         public readonly int Length;
@@ -2096,6 +2217,9 @@ namespace ECS.Strings
             return new_string;
         }
     }
+    /// <summary>
+    /// Static string extensions.
+    /// </summary>
     public static class StringExtensions
     {
         public static string ToIString(this IEnumerable<char> chars)
@@ -2112,6 +2236,9 @@ namespace ECS.Graphics
     using static RenderWindow;
     using static UnmanagedCSharp;
     using static Maths.RNG;
+    /// <summary>
+    /// Anchors transforms to specific areas of the screen. Useful for UI elements.
+    /// </summary>
     public enum Anchor
     {
         TOP_LEFT = 0,
@@ -2120,6 +2247,9 @@ namespace ECS.Graphics
         BOTTOM_RIGHT = 3,
         CENTRE = 4,
     }
+    /// <summary>
+    /// Static graphics extensions.
+    /// </summary>
     public static class GraphicsExtensions
     {
         public static Vector2f GetAbsoluteFromAnchor(this Anchor anchor)
@@ -2140,6 +2270,9 @@ namespace ECS.Graphics
             return anchor.GetAbsoluteFromAnchor() + position;
         }
     }
+    /// <summary>
+    /// Represents the location, size, rotation, scale, origin of an object or sprite. Most, if not all, objects need a transform but this is not enforced by the engine.
+    /// </summary>
     public struct CTransform : ICData
     {
         public Anchor Anchor
@@ -2306,6 +2439,9 @@ namespace ECS.Graphics
         private bool myInverseNeedUpdate;
         private Anchor myAnchor;
     }
+    /// <summary>
+    /// Represents a sprite attached to an object. Objects must reference a texture if they are to be drawn. This is a local reference to a global texture entry to reduce RAM usage.
+    /// </summary>
     public unsafe struct CTexture : Drawable, ICData
     {
         public static readonly CTexture Null = new CTexture();
@@ -2405,18 +2541,27 @@ namespace ECS.Graphics
 }
 namespace ECS.Maths
 {
+    /// <summary>
+    /// Static mathematical constants. Used with the physics testing implementations. Not primarily used in current examples.
+    /// </summary>
     public static class Constants
     {
         public static readonly Vector2f Gravity = new Vector2f(0, 9.80665f);
         public static Vector2f ModifiableGravity = new Vector2f(0, 0);
     }
 
+    /// <summary>
+    /// Static global pseudo-random number generator.
+    /// </summary>
     public static class RNG
     {
         private static readonly Random Random = new Random();
         public static int Next(int min, int max) => Random.Next(min, max);
     }
 
+    /// <summary>
+    /// Static mathematical functions for simple and engine specific operations.
+    /// </summary>
     public static class Maths
     {
         /// <summary>
@@ -2467,8 +2612,15 @@ namespace ECS.Maths
 namespace ECS.Collections
 {
     using static CAllocation;
-    public static unsafe class Generic
+    /// <summary>
+    /// Static class for accessing unmanaged versions of managed C# collections ('System.Collections.Generic').
+    /// </summary>
+    internal static unsafe class Generic
     {
+        /// <summary>
+        /// Custom array implementation. Used primarily in unmanaged code, specifically for collision trees.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
         public struct LocalArray<T> : IDisposable where T : unmanaged
         {
             private int sizeOf;
@@ -2556,6 +2708,10 @@ namespace ECS.Collections
                 Free(Items);
             }
         }
+        /// <summary>
+        /// Custom dictionary implementation. Used primarily in unmanaged code, specifically for collision trees.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
         public struct LocalDictionary<T, U> : IDisposable where T : unmanaged where U : unmanaged
         {
             private struct Entry
@@ -2626,6 +2782,9 @@ namespace ECS.Collections
 }
 namespace ECS.Physics
 {
+    /// <summary>
+    /// Static physics functions. Used primarily for testing physics implementations.
+    /// </summary>
     public static class Physics
     {
         public static void ApplyForce(ref this CPhysicsBody body, Vector2f direction)
@@ -2633,6 +2792,9 @@ namespace ECS.Physics
             body.Velocity += direction;
         }
     }
+    /// <summary>
+    /// Represents physics data for handling an object based on physical properties.
+    /// </summary>
     public struct CPhysicsBody : ICData
     {
         public static readonly Vector2f ConstantAcceleration = new Vector2f(1, 1);
@@ -2640,15 +2802,21 @@ namespace ECS.Physics
         public Vector2f Velocity;
         public Vector2f Acceleration;
     }
-    public struct CCollider : ICData
-    {
-        public bool IsInTree;
-    }
 }
 namespace ECS.Collision
 {
     using static Maths.Maths;
     using static Collections.Generic;
+    /// <summary>
+    /// Represents an object that can be collided with. Only contains information about whether it is in an AABB Tree. CTransforms contain the actual AABB information.
+    /// </summary>
+    public struct CCollider : ICData
+    {
+        public bool IsInTree;
+    }
+    /// <summary>
+    /// Represents an Axis-Aligned Bounding Box which contains information about the min and max coordinates (corners) of a rectangle.
+    /// </summary>
     public struct AABB 
     {
         public float minX;
@@ -2710,6 +2878,9 @@ namespace ECS.Collision
         public float GetHeight() => ( maxY - minY );
 
     }
+    /// <summary>
+    /// Represents a bounding box attached to the AABB Tree. If this node has a valid object pointer, it is an object, if not, it is a box containing other nodes.
+    /// </summary>
     public unsafe struct AABBNode 
     {
         public static readonly int NULL_NODE = int.MaxValue;
@@ -2736,6 +2907,9 @@ namespace ECS.Collision
         }
     }
     // # https://www.azurefromthetrenches.com/introductory-guide-to-aabb-tree-collision-detection/
+    /// <summary>
+    /// Represents the tree containing all the collision data. The nodes of the tree branch into other, isolated, nodes allowing for quick overlapping checks. Broad phase collision testing.
+    /// </summary>
     public unsafe struct AABBTree : IDisposable
     {
 
@@ -3095,6 +3269,9 @@ namespace ECS.Collision
 }
 namespace ECS.Delegates
 {
+    /// <summary>
+    /// Unmanaged version of C# delegates. Stores the managed delegate and makes marshalled calls to it.
+    /// </summary>
     public unsafe struct CDelegate
     {
         private static readonly Dictionary<int, Delegate> delegateMap = new Dictionary<int, Delegate>();
@@ -3129,6 +3306,9 @@ namespace ECS.UI
 {
     using static ECS.Collections.Generic;
     using static SFML.Graphics.RenderWindow;
+    /// <summary>
+    /// UI element. Can be pressed/clicked in order to invoke some action.
+    /// </summary>
     public struct CButton : ICData
     {
         private CDelegate OnClick;
@@ -3141,6 +3321,9 @@ namespace ECS.UI
             OnClick.Invoke<Action>();
         }
     }
+    /// <summary>
+    /// UI element. Drawable text on the screen such as a textbox.
+    /// </summary>
     public struct CText : Drawable, ICData
     {
         private CString String;
@@ -3178,8 +3361,6 @@ namespace ECS.UI
 
             float whiteSpaceWidth = Font.GetGlyph(' ', CharacterSize).Advance;
             float letterSpacing = whiteSpaceWidth / 3f;
-            //whiteSpaceWidth += letterSpacing;
-            //float lineSpacing = Font.GetLineSpacing(CharacterSize);
             float x = 0;
             float y = CharacterSize;
             uint previousChar = 0;
@@ -3229,7 +3410,9 @@ namespace ECS.UI
             }
         }
     }
-    
+    /// <summary>
+    /// UI element. Unmanaged font file used for getting font data when drawing text.
+    /// </summary>
     public struct CFont
     {
         public IntPtr sfmlFont;
@@ -3254,6 +3437,9 @@ namespace ECS.UI
 namespace ECS.Animations
 {
     using static UnmanagedCSharp;
+    /// <summary>
+    /// Represents an animation. Sets the object's texture to the next frame of the animation.
+    /// </summary>
     public unsafe struct CAnimation : ICData
     {
         private IntPtr internalEntry;
@@ -3284,7 +3470,7 @@ namespace ECS.GarbageCollection
 {
     using static CAllocation;
     /// <summary>
-    /// C Garbage Collection
+    /// Unmanaged Garbage Collection for resizing data blocks. Only used in custom array implementations as data tables use a different method.
     /// </summary>
     public unsafe static class CGC
     {
@@ -3301,6 +3487,9 @@ namespace ECS.GarbageCollection
 namespace ECS.Exceptions
 {
     using ECS.Logger;
+    /// <summary>
+    /// Abstract, bae class for Exceptions in the engine. Used in conjunction with a logger to report why the engine crashed. Detailed, inherited exceptions allow for better debugging.
+    /// </summary>
     public abstract class CoreException : Exception
     {
         public CoreException(string message) : base(message + "\nEngine core invalidated.")
@@ -3313,7 +3502,7 @@ namespace ECS.Exceptions
     }
     public class IncompatibleTypeException : CoreException
     {
-        public IncompatibleTypeException(string typeName, string desiredTypeName) : base(typeName + " is an incompatible type as it does not inherit " + desiredTypeName) { } 
+        public IncompatibleTypeException(string typeName, string desiredTypeName) : base(string.Format("{0} is an incompatible type as it does not inherit {1}", typeName, desiredTypeName)) { } 
     }
     public class InvalidEnumValueException : CoreException
     {
@@ -3373,8 +3562,8 @@ namespace ECS.Exceptions
     }
     public class DataPointerNullException : PointerException
     {
-        public DataPointerNullException(string typeName) : base("Object could not access " + typeName + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
-        public DataPointerNullException(string typeName, string typeName2) : base("Object could not access " + typeName + " and/or " + typeName2 + " related data as it did not possess any. Please check the object is valid and you added the relevant data to it.") { }
+        public DataPointerNullException(string typeName) : base(string.Format("Object could not access {0} related data as it did not possess any. Please check the object is valid and you added the relevant data to it.", typeName)) { }
+        public DataPointerNullException(string typeName, string typeName2) : base(string.Format("Object could not access {0} and/or {1} related data as it did not possess any. Please check the object is valid and you added the relevant data to it.", typeName, typeName2)) { }
     }
     public class MissingReferenceException : PointerException
     {
@@ -3382,7 +3571,7 @@ namespace ECS.Exceptions
     }
     public class TextureNotFoundException : TextureException
     {
-        public TextureNotFoundException(string filename) : base("The loaded texture at " + filename + " could not be found. Either the path is wrong or the texture was not previously loaded.") { }
+        public TextureNotFoundException(string filename) : base(string.Format("The loaded texture at {0} could not be found. Either the path is wrong or the texture was not previously loaded.", filename)) { }
     }
     public class TextureSpriteSheetInvalidException : TextureException
     {
@@ -3411,7 +3600,9 @@ namespace ECS.Exceptions
 }
 namespace ECS.Logger
 {
-
+    /// <summary>
+    /// Logs information about the running engine. Used for statistics gathering and debugging. Only one logger can exist at once.
+    /// </summary>
     public class Logger
     {
         internal static Logger Instance { get; private set; } = null;
@@ -3423,6 +3614,9 @@ namespace ECS.Logger
 
         public readonly bool IsFileRelative = true;
         public readonly string LogFileName = "Log";
+
+        private DateTime lastLog = new DateTime();
+        private string lastLogName = string.Empty;
 
         public string GetFileLocation()
         {
@@ -3471,8 +3665,8 @@ namespace ECS.Logger
                 Logs.Add(log);
             }
         }
-        public void AddLog(LogItem item) => AddLog(item.ToString());
-        public void AddLog(LogKey key, string name, string value) => AddLog(new LogItem(key, name, value));
+        public void AddLog(LogItem item) => this.AddLog(item.ToString());
+        public void AddLog(LogKey key, string name, string value) => this.AddLog(new LogItem(key, name, value));
 
         internal static void CreateLogger(string filename)
         {
@@ -3486,33 +3680,33 @@ namespace ECS.Logger
             {
                 if (file.Contains(LoggerExtension))
                 {
-                    Console.WriteLine(file.Replace(path, ""));
+                    Console.WriteLine("\n" + file.Replace(path, ""));
                     var logger = new Logger(Path.GetFileNameWithoutExtension(file), inCurrentDirectory, false);
-                    var averages = new Dictionary<string, List<float>>();
-                    var lowests = new Dictionary<string, float>();
-                    var highests = new Dictionary<string, float>();
+                    var averages = new Dictionary<string, List<double>>();
+                    var lowests = new Dictionary<string, double>();
+                    var highests = new Dictionary<string, double>();
                     foreach(var item in logger.Logs)
                     {
                         var logItem = LogItem.FromString(item);
                         if (logItem.Key == LogKey.StatisticsLog)
                         {
-                            var float_val = Convert.ToSingle(logItem.Value);
+                            var double_val = Convert.ToDouble(logItem.Value);
 
                             if (!lowests.ContainsKey(logItem.Name))
-                                lowests.Add(logItem.Name, float.PositiveInfinity);
-                            else if (lowests[logItem.Name] > float_val)
-                                lowests[logItem.Name] = float_val;
+                                lowests.Add(logItem.Name, double_val);
+                            else if (lowests[logItem.Name] > double_val)
+                                lowests[logItem.Name] = double_val;
 
 
                             if (!highests.ContainsKey(logItem.Name))
-                                highests.Add(logItem.Name, float.NegativeInfinity);
-                            else if (highests[logItem.Name] < float_val)
-                                highests[logItem.Name] = float_val;
+                                highests.Add(logItem.Name, double_val);
+                            else if (highests[logItem.Name] < double_val)
+                                highests[logItem.Name] = double_val;
 
                             if (averages.ContainsKey(logItem.Name))
-                                averages[logItem.Name].Add(float_val);
+                                averages[logItem.Name].Add(double_val);
                             else
-                                averages.Add(logItem.Name, new List<float> { float_val });
+                                averages.Add(logItem.Name, new List<double> { double_val });
                         }
                     }
 
@@ -3520,15 +3714,15 @@ namespace ECS.Logger
                     foreach(var kvp in averages)
                     {
                         Console.Write(kvp.Key + ": ");
-                        var value = 0f;
+                        var value = 0d;
                         foreach (var item in kvp.Value)
                             value += item;
                         Console.WriteLine(value / kvp.Value.Count);
                     }
 
-                    Console.WriteLine("Lowests");
+                    Console.WriteLine("\nLowests");
                     lowests.PrintDict();
-                    Console.WriteLine("Highests");
+                    Console.WriteLine("\nHighests");
                     highests.PrintDict();
                     Console.WriteLine();
                 }
@@ -3542,6 +3736,9 @@ namespace ECS.Logger
         StatisticsLog,
         Error,
     }
+    /// <summary>
+    /// Logs are written in a specific way for easy decoding, this is used to organise and compile logs from strings.
+    /// </summary>
     public struct LogItem
     {
         private static readonly string[] SeparatorArray = new string[] { SeparatorString };
@@ -3591,6 +3788,9 @@ namespace ECS.Logger
             return item;
         }
     }
+    /// <summary>
+    /// Static logger extensions.
+    /// </summary>
     public static class LoggerExtensions
     {
         public static void PrintDict<Key, Value>(this Dictionary<Key, Value> dict)
