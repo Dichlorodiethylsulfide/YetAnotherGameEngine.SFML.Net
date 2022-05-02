@@ -3,11 +3,7 @@
 #define MULTI_THREAD_SUBSYSTEMS
 #undef MULTI_THREAD_SUBSYSTEMS
 
-#define CPP_ALLOCATION
-
-#if GAME_TEST_DEBUG || BRUTE_FORCE_RENDERING_DEBUG
-#define DEBUG
-#endif
+// https://dotnet.microsoft.com/en-us/download/dotnet/3.1
 
 using System;
 using System.IO;
@@ -56,7 +52,7 @@ namespace ECS
         /// <summary>
         /// Synchronises threads and updates the current delta time of the engine.
         /// </summary>
-        private struct FrameTimeDelay
+        internal struct FrameTimeDelay
         {
             public float DeltaTime0;
             public float DeltaTime1;
@@ -67,7 +63,7 @@ namespace ECS
             public Thread GameLoopThread;
             public bool HasGameLoopUpdatedRecently;
         }
-        private static FrameTimeDelay FrameTime = new FrameTimeDelay();
+        internal static FrameTimeDelay FrameTime = new FrameTimeDelay();
         internal static void RegisterThreadContinuance(Thread thread)
         {
             lock(TimeSyncRoot)
@@ -129,10 +125,21 @@ namespace ECS
     public class FilePath
     {
         public string CurrentPath { get; internal set; }
-        public FilePath(string path) => CurrentPath = Path.GetFullPath(path);
+        private FilePath(string path) => CurrentPath = Path.GetFullPath(path);
         public override string ToString() => CurrentPath;
 
-        public static implicit operator string(FilePath path) => path.ToString();
+        public static implicit operator string(FilePath path)
+        {
+            if (path is null)
+                throw new NullReferenceException("FilePath.Get() might've returned null as the specified path was not valid as it did not point to an actual file or resource.");
+            return path.ToString();
+        }
+        public static FilePath Get(string path)
+        {
+            if(File.Exists(Path.GetFullPath(path)))
+                return new FilePath(path);
+            return null;
+        }
     }
     /// <summary>
     /// Used for determining which types are supposed to represent the 'data' in the system. Data tables are created for each 'ICData' type registered.
@@ -167,16 +174,13 @@ namespace ECS
             }
         }
         public bool IsNull => this.MetaPtr == IntPtr.Zero || this.ID == 0;
-        internal bool IsInternalAlive
+        internal unsafe bool IsInternalAlive
         {
             get
             {
-                unsafe
-                {
-                    if (ObjectTablePtr->GetRef<CObject>((int)Index)->MetaPtr == MetaPtr)
-                        return true;
-                    return false;
-                }
+                if (ObjectTablePtr->GetRef<CObject>((int)Index)->MetaPtr == MetaPtr)
+                    return true;
+                return false;
             }
         }
 
@@ -205,6 +209,9 @@ namespace ECS
                 return Meta->HasDataOfAll(indexes);
             return false;
         }
+        /// <summary>
+        /// Unique ID of this CObject
+        /// </summary>
         public long ID { get; private set; }
         public void AddData<T>(T data) where T : unmanaged
         {
@@ -303,22 +310,19 @@ namespace ECS
         }
         public static void Destroy(CObject obj)
         {
-            unsafe
+            lock (Subsystem.SyncRoot)
             {
-                lock (Subsystem.SyncRoot)
-                {
-                    var index = (int)obj.Index;
-                    obj.InternalDispose();
-                    Objects.RemoveObjectAtIndex(index);
-                }
+                var index = (int)obj.Index;
+                obj.InternalDispose();
+                Objects.RemoveObjectAtIndex(index);
             }
         }
-        internal static CObject New(long index)
+        internal static CObject New(long id)
         {
             var obj = new CObject
             {
-                ID = index,
-                Index = index - 1,
+                ID = id,
+                Index = id - 1,
                 MetaPtr = CMetaData.New(),
             };
             return obj;
@@ -331,18 +335,6 @@ namespace ECS
     /// </summary>
     internal static class CAllocation
     {
-#if CPP_ALLOCATION
-        private const string ECSDLL = "ECSDLL";
-        
-        [DllImport(ECSDLL)]
-        public static extern IntPtr Malloc(int size);
-        [DllImport(ECSDLL)]
-        public static extern void Free(IntPtr ptr);
-        [DllImport(ECSDLL)]
-        public static extern void MemSet(IntPtr ptr, int value, int size);
-        [DllImport(ECSDLL)]
-        public static extern void MemMove(IntPtr destination, IntPtr source, int size);
-#else
         public static IntPtr Malloc(int size)
         {
             return Marshal.AllocHGlobal(size);
@@ -366,7 +358,6 @@ namespace ECS
                 Marshal.WriteByte(destination + i, _byte);
             }
         }
-#endif
     }
     /// <summary>
     /// Core static class for the engine. Manages access to data tables and objects. 'using static UnmanagedCSharp;' is used to explicitly declare the use of this engine's management system.
@@ -1670,6 +1661,7 @@ namespace ECS.Library
 
         internal EngineWindow ThisWindow = null;
 
+        private readonly List<string> setEngineFlags = new List<string>();
         public abstract void Initialise();
         public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false, false);
         
@@ -1736,7 +1728,8 @@ namespace ECS.Library
                 MainWindow.Close();
             }
         }
-        public static void Start(Type engineType)
+        public static bool IsEngineFlagSet(string flag) => MainEngine.setEngineFlags.Contains(flag);
+        public static void Start(Type engineType, params string[] engineFlags)
         {
             if (engineType.IsSubclassOf(typeof(Engine)))
             {
@@ -1749,6 +1742,8 @@ namespace ECS.Library
 #endif
 
                 MainEngine = (Engine)Activator.CreateInstance(engineType);
+
+                MainEngine.setEngineFlags.AddRange(engineFlags);
 
                 Entry(MainEngine.Settings.MainTableSize, MainEngine.Settings.ObjectTableSize, MainEngine.Settings.DataTableSize, MainEngine.Settings.TextureTableSize);
 
@@ -1780,14 +1775,13 @@ namespace ECS.Library
 #else
                 MainEngine.Initialise();
 #endif
-
                 Collection.SubsystemsToTestFor(new KeyValuePair<Type, bool>(typeof(CollisionSubsystem), MainEngine.Settings.EnableCollisions),
                                                new KeyValuePair<Type, bool>(typeof(AnimationSubsystem), MainEngine.Settings.EnableAnimations));
 
                 Subsystem.SystemFlags.SetFlags();
 
 
-                while (MainEngine.ThisWindow is null && Time.DeltaTime == 0f)
+                while (MainEngine.ThisWindow is null && Time.FrameTime.DeltaTime0 == 0f)
                     ;
 
                 while (MainWindow.IsOpen)
@@ -2906,7 +2900,6 @@ namespace ECS.Collision
             return node;
         }
     }
-    // # https://www.azurefromthetrenches.com/introductory-guide-to-aabb-tree-collision-detection/
     /// <summary>
     /// Represents the tree containing all the collision data. The nodes of the tree branch into other, isolated, nodes allowing for quick overlapping checks. Broad phase collision testing.
     /// </summary>
@@ -2978,20 +2971,16 @@ namespace ECS.Collision
 
         private void insertLeaf(int leafNodeIndex)
         {
-            // if the tree is empty then we make the root the leaf
             if (rootNodeIndex == AABBNode.NULL_NODE)
             {
                 rootNodeIndex = leafNodeIndex;
                 return;
             }
 
-            // search for the best place to put the new leaf in the tree
-            // we use surface area and depth as search heuristics
             int treeNodeIndex = rootNodeIndex;
             AABBNode* leafNode = nodes.ReadPointerAt(leafNodeIndex);
             while (!nodes.ReadPointerAt(treeNodeIndex)->IsLeaf())
             {
-                // because of the test in the while loop above we know we are never a leaf inside it
                 AABBNode* treeNode = nodes.ReadPointerAt(treeNodeIndex);
                 int leftNodeIndex = treeNode->LeftNodeIndex;
                 int rightNodeIndex = treeNode->RightNodeIndex;
@@ -3003,7 +2992,6 @@ namespace ECS.Collision
                 float newParentNodeCost = 2.0f * combinedAabb.SurfaceArea;
                 float minimumPushDownCost = 2.0f * ( combinedAabb.SurfaceArea - treeNode->AssociatedAABB.SurfaceArea );
 
-                // use the costs to figure out whether to create a new parent here or descend
                 float costLeft;
                 float costRight;
                 if (leftNode->IsLeaf())
@@ -3025,14 +3013,11 @@ namespace ECS.Collision
                     costRight = ( newRightAabb.SurfaceArea - rightNode->AssociatedAABB.SurfaceArea ) + minimumPushDownCost;
                 }
 
-                // if the cost of creating a new parent node here is less than descending in either direction then
-                // we know we need to create a new parent node, errrr, here and attach the leaf to that
                 if (newParentNodeCost < costLeft && newParentNodeCost < costRight)
                 {
                     break;
                 }
 
-                // otherwise descend in the cheapest direction
                 if (costLeft < costRight)
                 {
                     treeNodeIndex = leftNodeIndex;
@@ -3043,15 +3028,13 @@ namespace ECS.Collision
                 }
             }
 
-            // the leafs sibling is going to be the node we found above and we are going to create a new
-            // parent node and attach the leaf and this item
             int leafSiblingIndex = treeNodeIndex;
             AABBNode* leafSibling = nodes.ReadPointerAt(leafSiblingIndex);
             int oldParentIndex = leafSibling->ParentNodeIndex;
             int newParentIndex = allocateNode();
             AABBNode* newParent = nodes.ReadPointerAt(newParentIndex);
             newParent->ParentNodeIndex = oldParentIndex;
-            newParent->AssociatedAABB = leafNode->AssociatedAABB.Merge(leafSibling->AssociatedAABB); // the new parents aabb is the leaf aabb combined with it's siblings aabb
+            newParent->AssociatedAABB = leafNode->AssociatedAABB.Merge(leafSibling->AssociatedAABB);
             newParent->LeftNodeIndex = leafSiblingIndex;
             newParent->RightNodeIndex = leafNodeIndex;
             leafNode->ParentNodeIndex = newParentIndex;
@@ -3059,13 +3042,10 @@ namespace ECS.Collision
 
             if (oldParentIndex == AABBNode.NULL_NODE)
             {
-                // the old parent was the root and so this is now the root
                 rootNodeIndex = newParentIndex;
             }
             else
             {
-                // the old parent was not the root and so we need to patch the left or right index to
-                // point to the new node
                 AABBNode* oldParent = nodes.ReadPointerAt(oldParentIndex);
                 if (oldParent->LeftNodeIndex == leafSiblingIndex)
                 {
@@ -3076,8 +3056,6 @@ namespace ECS.Collision
                     oldParent->RightNodeIndex = newParentIndex;
                 }
             }
-
-            // finally we need to walk back up the tree fixing heights and areas
             treeNodeIndex = leafNode->ParentNodeIndex;
             fixUpwardsTree(treeNodeIndex);
         }
@@ -3085,27 +3063,22 @@ namespace ECS.Collision
 
         private void removeLeaf(int leafNodeIndex)
         {
-            // if the leaf is the root then we can just clear the root pointer and return
             if (leafNodeIndex == rootNodeIndex)
             {
                 rootNodeIndex = AABBNode.NULL_NODE;
                 return;
             }
-
             AABBNode* leafNode = nodes.ReadPointerAt(leafNodeIndex);
-            if(leafNode->ParentNodeIndex == int.MaxValue) // fail safe
+            if(leafNode->ParentNodeIndex == int.MaxValue)
                 return;
             int parentNodeIndex = leafNode->ParentNodeIndex;
             AABBNode* parentNode = nodes.ReadPointerAt(parentNodeIndex);
             int grandParentNodeIndex = parentNode->ParentNodeIndex;
             int siblingNodeIndex = parentNode->LeftNodeIndex == leafNodeIndex ? parentNode->RightNodeIndex : parentNode->LeftNodeIndex;
-            //assert(siblingNodeIndex != AABB_NULL_NODE); // we must have a sibling
             AABBNode* siblingNode = nodes.ReadPointerAt(siblingNodeIndex);
 
             if (grandParentNodeIndex != AABBNode.NULL_NODE)
             {
-                // if we have a grand parent (i.e. the parent is not the root) then destroy the parent and connect the sibling to the grandparent in its
-                // place
                 AABBNode* grandParentNode = nodes.ReadPointerAt(grandParentNodeIndex);
                 if (grandParentNode->LeftNodeIndex == parentNodeIndex)
                 {
@@ -3122,7 +3095,6 @@ namespace ECS.Collision
             }
             else
             {
-                // if we have no grandparent then the parent is the root and so our sibling becomes the root and has it's parent removed
                 rootNodeIndex = siblingNodeIndex;
                 siblingNode->ParentNodeIndex = AABBNode.NULL_NODE;
                 deallocateNode(parentNodeIndex);
@@ -3135,9 +3107,6 @@ namespace ECS.Collision
         {
             AABBNode* node = nodes.ReadPointerAt(leafNodeIndex);
 
-            // if the node contains the new aabb then we just leave things
-            // TODO: when we add velocity this check should kick in as often an update will lie within the velocity fattened initial aabb
-            // to support this we might need to differentiate between velocity fattened aabb and actual aabb
             if (node->AssociatedAABB.Contains(newAaab))
             { return; }
 
@@ -3167,7 +3136,7 @@ namespace ECS.Collision
             int nodeIndex = allocateNode();
             AABBNode* node = nodes.ReadPointerAt(nodeIndex);
 
-            node->AssociatedAABB = cObject->Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox;//cObject->GetDataPointer<Transform>()->BoundingBox;
+            node->AssociatedAABB = cObject->Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox;
             node->ObjectPointer = cObject;
 
             insertLeaf(nodeIndex);

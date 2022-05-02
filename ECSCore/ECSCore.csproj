@@ -4,7 +4,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <LangVersion>8.0</LangVersion>
-    <Configurations>Debug;Release;GAME_TEST;BRUTE_FORCE_RENDERING;BRUTE_FORCE_RENDERING_DEBUG;GAME_TEST_DEBUG</Configurations>
+    <Configurations>Debug;Release</Configurations>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,10 +18,4 @@
     <ProjectReference Include="..\src\SFML.Window\SFML.Window.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Update="ECSDLL.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  
 </Project>

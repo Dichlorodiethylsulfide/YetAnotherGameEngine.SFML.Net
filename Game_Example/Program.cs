@@ -1,15 +1,3 @@
-#define USING_ANIMATIONS
-#define MOVING_RENDERING
-#define BRUTE_FORCE_RENDERING
-
-#if GAME_TEST
-#undef BRUTE_FORCE_RENDERING
-#endif
-
-#if BRUTE_FORCE_RENDERING
-#undef USING_ANIMATIONS
-#endif
-
 using ECS;
 using ECS.Animations;
 using ECS.Strings;
@@ -45,6 +33,15 @@ namespace Game_Example
                 {
                     ECS.Logger.Logger.ReadAvailableLogs();
                 }
+                else if(arg == "--set-flag" && args.Length == 2)
+                {
+                    Engine.Start(typeof(GameEngine), args[1]);
+                }
+                else if(arg == "--set-flags" && args.Length > 2)
+                {
+                    var flags = args.Skip(2).ToArray();
+                    Engine.Start(typeof(GameEngine), flags);
+                }
                 else
                 {
                     Debug.Log("Unknown Arg!");
@@ -59,11 +56,8 @@ namespace Game_Example
     }
     internal class GameEngine : Engine
     {
-        public static readonly FilePath ArialFont = new FilePath(@"..\..\..\..\Resources\Placeholder\arial.ttf");
-        public static readonly FilePath Bullet = new FilePath(@"..\..\..\..\Resources\Placeholder\Bullet.png");
-        public static readonly FilePath ExitButton = new FilePath(@"..\..\..\..\Resources\Placeholder\ExitButton.png");
-        public static readonly FilePath StartButton = new FilePath(@"..\..\..\..\Resources\Placeholder\StartButton.png");
-        public static readonly FilePath SpriteSheet = new FilePath(@"..\..\..\..\Resources\Placeholder\Block_SpriteSheet.png");
+        public static bool IsRenderingTest = false;
+        public static bool IsGameTest = false;
 
         public static CTexture SpriteSheetTexture;
         public static CTexture StartTexture;
@@ -73,42 +67,49 @@ namespace Game_Example
         public static CAnimation SquareAnimation;
         public static CFont Arial;
 
-        public static int SpawnCounter = 1000;
+        public static int SpawnCounter = 1;
         private static int SqSpawnCounter => SpawnCounter * SpawnCounter;
 
-#if !GAME_TEST
-        public override EngineSettings Settings => new EngineSettings(64, (int)(SqSpawnCounter * 1.1f), (int)(SqSpawnCounter * 1.1f), 64, new Vector2u(1920, 1080), "Engine Window", false, false, false, 60);
-#else
-#if USING_ANIMATIONS
-        public override EngineSettings Settings => new EngineSettings(64, 1024, 1024, 64, new Vector2u(1920, 1080), "Engine Window", false, true, true, 60);
-#else
-        public override EngineSettings Settings => new EngineSettings(64, 1024000, 1024000, 64, new Vector2u(1920, 1080), "Engine Window", false, true, false, 60);
-#endif
-#endif
+        public override EngineSettings Settings
+        {
+            get
+            {
+                if (IsRenderingTest)
+                    return new EngineSettings(64, (int)( SqSpawnCounter * 1.1f ), (int)( SqSpawnCounter * 1.1f ), 64, new Vector2u(1280, 720), "Engine Window", false, false, false, 60);
+                return new EngineSettings(64, 1024, 1024, 64, new Vector2u(1280, 720), "Engine Window", false, true, true, 60);
+            }
+        }
+
         public override void Initialise()
         {
-            SpriteSheetTexture = CTexture.CreateSpriteSheet(SpriteSheet, new Vector2u(32, 32));
-            StartTexture = new CTexture(StartButton);
-            ExitTexture = new CTexture(ExitButton);
+            IsRenderingTest = IsEngineFlagSet("Rendering-Test");
+            IsGameTest = IsEngineFlagSet("Game-Test") || !IsRenderingTest;
+
+            SpriteSheetTexture = CTexture.CreateSpriteSheet(FilePath.Get(@".\Resources\Placeholder\Block_SpriteSheet.png"), new Vector2u(32, 32));
+            StartTexture = new CTexture(FilePath.Get(@".\Resources\Placeholder\StartButton.png"));
+            ExitTexture = new CTexture(FilePath.Get(@".\Resources\Placeholder\ExitButton.png"));
+            BulletTexture = new CTexture(FilePath.Get(@".\Resources\Placeholder\Bullet.png"));
+            Arial = new CFont(FilePath.Get(@".\Resources\Placeholder\arial.ttf"));
+
             SpawnTexture = SpriteSheetTexture.GetSpriteFromSheet(0);
-            BulletTexture = new CTexture(Bullet);
-            Arial = new CFont(ArialFont);
             SquareAnimation = new CAnimation("SquareAnimation", 5);
             for (int i = 0; i < 5; i++)
                 SquareAnimation.SetFrameDataTo(i, ref SpriteSheetTexture);
-#if GAME_TEST
-            AddNewSubsystem<NewCollisionSubsystem>();
-#if USING_ANIMATIONS
-            AddNewSubsystem<NewAnimationSubsystem>();
-#endif
-            AddNewSubsystem<PlayerSubsystem>();
-            AddNewSubsystem<EnemySubsystem>();
-            AddNewDataType<CPlayerData>();
-            AddNewDataType<CEnemyData>();
-            AddNewDataType<CBulletData>();
-#elif BRUTE_FORCE_RENDERING && MOVING_RENDERING
-            AddNewSubsystem<MovementSubsystem>();
-#endif
+            if(IsGameTest)
+            {
+                AddNewSubsystem<NewCollisionSubsystem>();
+                AddNewSubsystem<NewAnimationSubsystem>();
+                AddNewSubsystem<PlayerSubsystem>();
+                AddNewSubsystem<EnemySubsystem>();
+                AddNewDataType<CPlayerData>();
+                AddNewDataType<CEnemyData>();
+                AddNewDataType<CBulletData>();
+            }
+            else
+            {
+                AddNewSubsystem<MovementSubsystem>();
+            }
+
             var startButton = CObject.New();
             startButton.AddData(StartTexture);
             startButton.AddData(new CTransform(0, 0, 128, 64, 0, 0, 0, Anchor.CENTRE));
@@ -118,59 +119,56 @@ namespace Game_Example
             var button = CObject.New();
             button.AddData(ExitTexture);
             button.AddData(new CTransform(-128, 0, 128, 64, 0, 0, 0, Anchor.TOP_RIGHT));
-            button.AddData(new CButton(() => Engine.Stop()));
+            button.AddData(new CButton(() => Stop()));
         }
         public void StartDemo()
         {
             CObject.Destroy(Objects.Get("StartButton"));
-#if GAME_TEST
-            var fpsCounter = CObject.New();
-            fpsCounter.AddData(new CText("FPS: ", Arial, 20));
-            fpsCounter.AddData(new CTransform(0, 60, 0, 0, 0, 0));
-            fpsCounter.AddData(new CString("FPSCounter"));
-
-            var enemyCount = CObject.New();
-            enemyCount.AddData(new CText("Enemies: 0", Arial, 20));
-            enemyCount.AddData(new CTransform(0, 40, 0, 0, 0, 0));
-            enemyCount.AddData(new CString("EnemyCount"));
-
-            var text = CObject.New();
-            text.AddData(new CText("Health: NaN", Arial, 20));
-            text.AddData(new CTransform(0, 20, 0, 0, 0, 0));
-            text.AddData(new CString("Health"));
-
-            var text2 = CObject.New();
-            text2.AddData(new CText("Kill count: 0", Arial, 20));
-            text2.AddData(new CTransform(0, 0, 0, 0, 0, 0));
-            text2.AddData(new CString("KillCounter"));
-
-            var player = CObject.New();
-            player.AddData(SpawnTexture.Modify((ref CTexture texture) => texture.SetColor(Color.Blue)));
-            player.AddData(new CTransform(100, 100, 32, 32));
-            player.AddData(new CPlayerData(100, 100, 1f));
-            player.AddData(new CCollider());
-#if USING_ANIMATIONS
-            player.AddData(SquareAnimation);
-#endif
-            player.AddData(new CString("Player 1"));
-#endif
-
-#if BRUTE_FORCE_RENDERING
-            for(int y = 0; y < SpawnCounter; y++)
+            if(IsGameTest)
             {
-                for(int x = 0; x < SpawnCounter; x++)
+                var fpsCounter = CObject.New();
+                fpsCounter.AddData(new CText("FPS: ", Arial, 20));
+                fpsCounter.AddData(new CTransform(0, 60, 0, 0, 0, 0));
+                fpsCounter.AddData(new CString("FPSCounter"));
+
+                var enemyCount = CObject.New();
+                enemyCount.AddData(new CText("Enemies: 0", Arial, 20));
+                enemyCount.AddData(new CTransform(0, 40, 0, 0, 0, 0));
+                enemyCount.AddData(new CString("EnemyCount"));
+
+                var text = CObject.New();
+                text.AddData(new CText("Health: NaN", Arial, 20));
+                text.AddData(new CTransform(0, 20, 0, 0, 0, 0));
+                text.AddData(new CString("Health"));
+
+                var text2 = CObject.New();
+                text2.AddData(new CText("Kill count: 0", Arial, 20));
+                text2.AddData(new CTransform(0, 0, 0, 0, 0, 0));
+                text2.AddData(new CString("KillCounter"));
+
+                var player = CObject.New();
+                player.AddData(SpawnTexture.Modify((ref CTexture texture) => texture.SetColor(Color.Blue)));
+                player.AddData(new CTransform(100, 100, 32, 32));
+                player.AddData(new CPlayerData(100, 100, 1f));
+                player.AddData(new CCollider());
+                player.AddData(SquareAnimation);
+                player.AddData(new CString("Player 1"));
+            }
+            else
+            {
+                for (int y = 0; y < SpawnCounter; y++)
                 {
-                    var cObject = CObject.New();
-                    cObject.AddData(new CTransform(x * 33, y * 33, 32, 32));
-                    cObject.AddData(SpawnTexture);
+                    for (int x = 0; x < SpawnCounter; x++)
+                    {
+                        var cObject = CObject.New();
+                        cObject.AddData(new CTransform(x * 33, y * 33, 32, 32));
+                        cObject.AddData(SpawnTexture);
+                    }
                 }
             }
-#endif
             StartSubsystems();
         }
     }
-
-#if BRUTE_FORCE_RENDERING
     internal class MovementSubsystem : Subsystem
     {
         public override void Update(float deltaSeconds)
@@ -181,7 +179,6 @@ namespace Game_Example
             }, true);
         }
     }
-#endif
     internal class NewAnimationSubsystem : AnimationSubsystem
     {
         public override void Update(float deltaSeconds)
@@ -326,9 +323,8 @@ namespace Game_Example
                 enemy.AddData(new CEnemyData(10, 0, 50));
                 enemy.AddData(new CCollider());
                 enemy.AddData(new CString("Enemy"));
-#if USING_ANIMATIONS
-                enemy.AddData(GameEngine.SquareAnimation);
-#endif
+                if(GameEngine.IsGameTest)
+                    enemy.AddData(GameEngine.SquareAnimation);
             }
         }
     }

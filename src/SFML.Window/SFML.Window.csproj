@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <SFMLModule>Window</SFMLModule>
-    <Configurations>Debug;Release;GAME_TEST;BRUTE_FORCE_RENDERING;BRUTE_FORCE_RENDERING_DEBUG;GAME_TEST_DEBUG</Configurations>
+    <Configurations>Debug;Release</Configurations>
   </PropertyGroup>
 
   <Import Project="..\..\SFML.Module.props" />
