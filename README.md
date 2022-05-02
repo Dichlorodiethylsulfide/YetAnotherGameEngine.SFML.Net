@@ -1,10 +1,12 @@
-# (IMPORTANT) 
+## (IMPORTANT) 
 
-If building using CPP_ALLOCATION preprocessor command:
+The host machine running the engine must either:
 
-    Project requires ECSDLL.dll to be built and copied into the same folder as ECSCORE.dll (or Game_Example.dll if running it directly) !!
-
-If not, the project will build as normal.
+    1. Have the DotNet 3.1 runtime natively installed at (C:/Program Files/dotnet)
+    or
+    2. Include the hostfxr.dll and "shared" folder (filled with all dotNet 3.1 libraries) in the main engine's directory (same folder as .exe)
+    
+    DotNet (installer or binaries): https://dotnet.microsoft.com/en-us/download/dotnet/3.1
 
 ## SFML.Net - Simple and Fast Multimedia Library for .Net
 
