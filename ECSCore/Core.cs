@@ -3,8 +3,6 @@
 #define MULTI_THREAD_SUBSYSTEMS
 #undef MULTI_THREAD_SUBSYSTEMS
 
-// https://dotnet.microsoft.com/en-us/download/dotnet/3.1
-
 using System;
 using System.IO;
 using System.Threading;
