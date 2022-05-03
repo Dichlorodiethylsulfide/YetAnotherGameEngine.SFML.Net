@@ -62,6 +62,10 @@ namespace ECS
             public bool HasGameLoopUpdatedRecently;
         }
         internal static FrameTimeDelay FrameTime = new FrameTimeDelay();
+        /// <summary>
+        /// Registers that the thread has completed
+        /// </summary>
+        /// <param name="thread"></param>
         internal static void RegisterThreadContinuance(Thread thread)
         {
             lock(TimeSyncRoot)
@@ -72,6 +76,11 @@ namespace ECS
                     FrameTime.HasGameLoopUpdatedRecently = true;
             }
         }
+        /// <summary>
+        /// Indicates the thread should wait while other threads are still running
+        /// </summary>
+        /// <param name="thread"></param>
+        /// <returns></returns>
         internal static bool AreOtherThreadsStillGoing(Thread thread)
         {
             lock(TimeSyncRoot)
@@ -95,14 +104,25 @@ namespace ECS
                 return false;
             }
         }
+        /// <summary>
+        /// Set the render thread of the FrameTime object
+        /// </summary>
+        /// <param name="thread"></param>
         internal static void SetRenderThread(Thread thread)
         {
             FrameTime.RenderThread = thread;
         }
+        /// <summary>
+        /// Set the game loop thread of the FrameTime object
+        /// </summary>
+        /// <param name="thread"></param>
         internal static void SetGameLoopThread(Thread thread)
         {
             FrameTime.GameLoopThread = thread;
         }
+        /// <summary>
+        /// Returns the previous frames' time to complete, keeps render thread and game loop from colliding
+        /// </summary>
         public static float DeltaTime
         {
             get
@@ -115,6 +135,9 @@ namespace ECS
                 FrameTime.DeltaTime0 = value;
             }
         }
+        /// <summary>
+        /// Current Framerate of the running subsystems, excludes rendering times
+        /// </summary>
         public static float FPS { get; internal set; } = 0f;
     }
     /// <summary>
@@ -132,6 +155,11 @@ namespace ECS
                 throw new NullReferenceException("FilePath.Get() might've returned null as the specified path was not valid as it did not point to an actual file or resource.");
             return path.ToString();
         }
+        /// <summary>
+        /// Ensures the FilePath is valid by checking if the supplied path is valid, returns null if path is invalid
+        /// </summary>
+        /// <param name="path"></param>
+        /// <returns></returns>
         public static FilePath Get(string path)
         {
             if(File.Exists(Path.GetFullPath(path)))
@@ -148,8 +176,12 @@ namespace ECS
     /// </summary>
     public static class Debug
     {
+        /// <summary>
+        /// Shortcut for Console.WriteLine
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="loggable"></param>
         public static void Log<T>(T loggable) => Console.WriteLine(loggable.ToString());
-        public static void Breakpoint() => Console.WriteLine("Hit a breakpoint.");
     }
     /// <summary>
     /// Used to represent individual objects in the engine. These are actual game objects and not an object 'base' class.
@@ -158,8 +190,13 @@ namespace ECS
     {
         private static long incrementer = 1;
         public static readonly CObject Null = new CObject();
-
+        /// <summary>
+        /// Object's index in the object table.
+        /// </summary>
         internal long Index;
+        /// <summary>
+        /// Checks if the object is alive and valid (non-null and not missing)
+        /// </summary>
         public bool IsAlive
         {
             get
@@ -171,7 +208,13 @@ namespace ECS
                 throw new MissingReferenceException();
             }
         }
+        /// <summary>
+        /// Checks if the object is null
+        /// </summary>
         public bool IsNull => this.MetaPtr == IntPtr.Zero || this.ID == 0;
+        /// <summary>
+        /// Internal IsAlive check. Can be checked without throwing an error on failure unlike IsAlive.
+        /// </summary>
         internal unsafe bool IsInternalAlive
         {
             get
@@ -181,8 +224,13 @@ namespace ECS
                 return false;
             }
         }
-
+        /// <summary>
+        /// Pointer to MetaData object associated with this object
+        /// </summary>
         internal IntPtr MetaPtr;
+        /// <summary>
+        /// Converts MetaPtr object to valid MetaData pointer
+        /// </summary>
         internal unsafe CMetaData* Meta
         {
             get
@@ -193,14 +241,34 @@ namespace ECS
                 }
             }
         }
+        /// <summary>
+        /// Returns true if the object has data with the specified type
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
         public bool HasDataOf<T>() where T : unmanaged => this.HasDataOf(CLookupTable.GetDataTableIndex<T>());
+        /// <summary>
+        /// Returns true if the object has data with the specified type
+        /// </summary>
+        /// <param name="type"></param>
+        /// <returns></returns>
         public bool HasDataOf(Type type) => this.HasDataOf(CLookupTable.GetDataTableIndex(type));
+        /// <summary>
+        /// Internal data type check. Checks 1 type AND checks if the object is alive.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <returns></returns>
         internal unsafe bool HasDataOf(int index)
         {
             if (IsAlive)
                 return Meta->HasDataOf(index);
             return false;
         }
+        /// <summary>
+        /// Internal data type check. Checks multiple types AND checks if the object is alive.
+        /// </summary>
+        /// <param name="indexes"></param>
+        /// <returns></returns>
         internal unsafe bool HasDataOfAll(params int[] indexes)
         {
             if (IsAlive)
@@ -211,6 +279,11 @@ namespace ECS
         /// Unique ID of this CObject
         /// </summary>
         public long ID { get; private set; }
+        /// <summary>
+        /// Adds data of T type to the object
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="data"></param>
         public void AddData<T>(T data) where T : unmanaged
         {
             if (!HasDataOf<T>())
@@ -228,6 +301,12 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name);
         }
+        /// <summary>
+        /// Returns copy of T type data associated with the object, throws error if none found
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        /// <exception cref="DataPointerNullException"></exception>
         public T GetData<T>() where T : unmanaged
         {
             var index = CLookupTable.GetDataTableIndex<T>();
@@ -240,6 +319,12 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name);
         }
+        /// <summary>
+        /// Allows editing of object data, write function for object data. Edits a single type.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="action"></param>
+        /// <exception cref="DataPointerNullException"></exception>
         public void WriteData<T>(Ref<T> action) where T : unmanaged
         {
             var index = CLookupTable.GetDataTableIndex<T>();
@@ -253,6 +338,13 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name);
         }
+        /// <summary>
+        /// Allows editing of object data, write function for object data. Edits 2 types.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <typeparam name="U"></typeparam>
+        /// <param name="action"></param>
+        /// <exception cref="DataPointerNullException"></exception>
         public void WriteData<T, U>(RefRef<T, U> action) where T : unmanaged where U : unmanaged
         {
             var index = CLookupTable.GetDataTableIndex<T>();
@@ -268,6 +360,12 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name, typeof(U).Name);
         }
+        /// <summary>
+        /// Completely overwrites T type data to copy of supplied T type data
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="data"></param>
+        /// <exception cref="DataPointerNullException"></exception>
         public void OverwriteData<T>(T data) where T : unmanaged
         {
             var index = CLookupTable.GetDataTableIndex<T>();
@@ -281,12 +379,24 @@ namespace ECS
             }
             throw new DataPointerNullException(typeof(T).Name);
         }
+        /// <summary>
+        /// Returns the object's hashcode (represented as the object's ID).
+        /// </summary>
+        /// <returns></returns>
         public override int GetHashCode() => (int)this.ID;
+        /// <summary>
+        /// Checks if 2 objects are equal. Only uses ID to check this as it should be unique in all situations.
+        /// </summary>
+        /// <param name="other"></param>
+        /// <returns></returns>
         public bool Equals(CObject other) => this.ID == other.ID;
-        public void Dispose()
-        {
-            Destroy(this);
-        }
+        /// <summary>
+        /// Dispose of the object. Calls destroy internally and removes it from the object table.
+        /// </summary>
+        public void Dispose() => Destroy(this);
+        /// <summary>
+        /// Dispose of the object's internal data if it's actually alive. Disposes of and frees MetaData. Does not remove it from the object table.
+        /// </summary>
         internal void InternalDispose()
         {
             if(IsAlive)
@@ -301,11 +411,19 @@ namespace ECS
                 Index = -1;
             }
         }
+        /// <summary>
+        /// Destroy the object and set the reference to it to NULL.
+        /// </summary>
+        /// <param name="obj"></param>
         public static void Destroy(ref CObject obj)
         {
             Destroy(obj);
             obj = Null;
         }
+        /// <summary>
+        /// Destroys and removes object from the object table, the supplied "obj" will still contain data but return as "missing" if read from/written to
+        /// </summary>
+        /// <param name="obj"></param>
         public static void Destroy(CObject obj)
         {
             lock (Subsystem.SyncRoot)
@@ -315,6 +433,11 @@ namespace ECS
                 Objects.RemoveObjectAtIndex(index);
             }
         }
+        /// <summary>
+        /// Create a new object with blank metadata and return it. Does not append it to the object table.
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
         internal static CObject New(long id)
         {
             var obj = new CObject
@@ -325,22 +448,41 @@ namespace ECS
             };
             return obj;
         }
+        /// <summary>
+        /// Creates a new CObject and appends it to the object table. Use this instead of "new CObject()".
+        /// </summary>
+        /// <returns></returns>
         public static CObject New() => Objects.AddNewObject(incrementer++);
     }
 
     /// <summary>
-    /// Internal static class for allocating unmanaged data in the engine. C++ allocation or C# allocation can be used, depends on the defined preprocessor command.
+    /// Internal static class for allocating unmanaged data in the engine.
     /// </summary>
     internal static class CAllocation
     {
+        /// <summary>
+        /// Operates same as C/C++ malloc
+        /// </summary>
+        /// <param name="size"></param>
+        /// <returns></returns>
         public static IntPtr Malloc(int size)
         {
             return Marshal.AllocHGlobal(size);
         }
+        /// <summary>
+        /// Operates same as C/C++ free
+        /// </summary>
+        /// <param name="ptr"></param>
         public static void Free(IntPtr ptr)
         {
             Marshal.FreeHGlobal(ptr);
         }
+        /// <summary>
+        /// Operates same as C/C++ memset
+        /// </summary>
+        /// <param name="ptr"></param>
+        /// <param name="value"></param>
+        /// <param name="size"></param>
         public static void MemSet(IntPtr ptr, byte value, int size)
         {
             for (var i = 0; i < size; i++)
@@ -348,6 +490,12 @@ namespace ECS
                 Marshal.WriteByte(ptr + i, value);
             }
         }
+        /// <summary>
+        /// Operates same as C/C++ memmove
+        /// </summary>
+        /// <param name="destination"></param>
+        /// <param name="source"></param>
+        /// <param name="size"></param>
         public static void MemMove(IntPtr destination, IntPtr source, int size)
         {
             for (var i = 0; i < size; i++)
@@ -362,16 +510,31 @@ namespace ECS
     /// </summary>
     public static unsafe class UnmanagedCSharp
     {
-
-        private const int DataTableStartIndex = 4; // Object Table at 0, Texture table will be 1, collisions is 2, animations will be 3, so should be 4 soon
+        /// <summary>
+        /// Object Table at 0, Texture table at 1, Collision Tree at 2, Animation Table at 3, returns 4
+        /// </summary>
+        private const int DataTableStartIndex = 4;
         private static int DefaultDataTableSize = 0;
-        private static IntPtr Table = IntPtr.Zero;
-        internal static CLookupTable* TablePtr => (CLookupTable*)Table;
-        internal static int DataTableEntries => TablePtr->Entries - DataTableStartIndex;
-        internal static CHook* ObjectTablePtr => (CHook*)*&TablePtr->Value0;
-        internal static CHook* TextureTablePtr => (CHook*)*( ( &TablePtr->Value0 ) + 1 );
-        internal static AABBTree* Tree => (AABBTree*)*( ( &TablePtr->Value0 ) + 2 );
-        internal static CHook* AnimationTablePtr => (CHook*)*( ( &TablePtr->Value0 ) + 3 );
+
+        /// Table Pointers
+        private static IntPtr MainTable = IntPtr.Zero;
+        internal static CLookupTable* MainTablePtr => (CLookupTable*)MainTable;
+        internal static int DataTableEntries => MainTablePtr->Entries - DataTableStartIndex;
+        internal static CHook* ObjectTablePtr => (CHook*)*&MainTablePtr->Value0;
+        internal static CHook* TextureTablePtr => (CHook*)*( ( &MainTablePtr->Value0 ) + 1 );
+        internal static AABBTree* Tree => (AABBTree*)*( ( &MainTablePtr->Value0 ) + 2 );
+        internal static CHook* AnimationTablePtr => (CHook*)*( ( &MainTablePtr->Value0 ) + 3 );
+        ///
+
+        /// <summary>
+        /// Entry point for setting up table allocation in engine. Not the main entry for the Engine itself but this is called when a new Engine is created.
+        /// Object table size and data table size should be equal in most circumstances.
+        /// </summary>
+        /// <param name="mainSize">Main table size</param>
+        /// <param name="objectSize">Size of each object table</param>
+        /// <param name="defaultDataSize">Size of each data table</param>
+        /// <param name="textureSize">Size of texture table</param>
+        /// <param name="animationSize">Size of aimation table</param>
         internal static void Entry(int mainSize = 64, int objectSize = 1024, int defaultDataSize = 1024, int textureSize = 64, int animationSize = 64)
         {
             CLookupTable.CreateTable(mainSize + DataTableStartIndex);
@@ -404,7 +567,7 @@ namespace ECS
             }
         }
         /// <summary>
-        /// Custom lookup table for handling access to other data tables. Only one instance can exist.
+        /// Main table. Custom lookup table for handling access to other data tables. Only one instance can exist.
         /// </summary>
         internal struct CLookupTable
         {
@@ -414,7 +577,11 @@ namespace ECS
             public int MaxSize;
             public int AllocatedBytes;
             public IntPtr Value0;
-
+            /// <summary>
+            /// Add a new entry to the lookup table directly.
+            /// </summary>
+            /// <param name="ptr"></param>
+            /// <exception cref="LookupTableLimitException"></exception>
             internal void Add(IntPtr ptr)
             {
                 if (Entries >= MaxSize)
@@ -424,7 +591,12 @@ namespace ECS
                     *( ptrPtr + Entries++ ) = ptr;
                 }
             }
-
+            /// <summary>
+            /// Privately get the index of the data table based on the types' hashcode.
+            /// </summary>
+            /// <param name="type"></param>
+            /// <returns></returns>
+            /// <exception cref="DataTableTypeIndexException"></exception>
             private int getDataTable(int type)
             {
                 fixed(IntPtr* ptrPtr = &Value0)
@@ -438,68 +610,110 @@ namespace ECS
                     throw new DataTableTypeIndexException(type);
                 }
             }
-
+            /// <summary>
+            /// Add a new type to the main loopup table. Can be either a specialised type or a data type.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="is_data_type"></param>
+            /// <param name="size"></param>
             private void addNewType<T>(bool is_data_type, int size = 1024) where T : unmanaged
             {
                 CHook.NewTableChain<T>(size);
                 if(is_data_type)
                     DataTableLookup.Add(typeof(T), getDataTable(typeof(T).GetHashCode()));
             }
-
+            /// <summary>
+            /// Privately return the hook of the data table based on index.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
+            /// <exception cref="IndexInvalidException"></exception>
             private CHook* getDataTableFromIndex(int index)
             {
                 fixed (IntPtr* ptrPtr = &Value0)
                 {
-                    if (index < 0 || index >= TablePtr->MaxSize)
-                        throw new IndexInvalidException("Data Type tables", index, 0, TablePtr->MaxSize);
+                    if (index < 0 || index >= MainTablePtr->MaxSize)
+                        throw new IndexInvalidException("Data Type tables", index, 0, MainTablePtr->MaxSize);
                     return (CHook*)*( ptrPtr + index );
                 }
             }
 
+            /// <summary>
+            /// Registers a new component data type and creates a table for it
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <exception cref="IncompatibleTypeException"></exception>
             public static void AddNewDataType<T>() where T : unmanaged
             {
                 if(!typeof(ICData).IsAssignableFrom(typeof(T)))
                 {
                     throw new IncompatibleTypeException(typeof(T).Name, typeof(ICData).Name);
                 }
-                TablePtr->addNewType<T>(true, DefaultDataTableSize);
+                MainTablePtr->addNewType<T>(true, DefaultDataTableSize);
             }
 
-            public static void AddNewType<T>(int size = 1024) where T : unmanaged => TablePtr->addNewType<T>(false, size);
+            /// <summary>
+            /// Registers a new non-component data type and creates a table for it
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="size"></param>
+            public static void AddNewType<T>(int size = 1024) where T : unmanaged => MainTablePtr->addNewType<T>(false, size);
 
+            /// <summary>
+            /// Returns the index of the data table associated with the Type object, throws error if not present
+            /// </summary>
+            /// <param name="type"></param>
+            /// <returns></returns>
+            /// <exception cref="DictionaryIndexInvalidException"></exception>
             public static int GetDataTableIndex(Type type)
             {
                 if (DataTableLookup.TryGetValue(type, out var value))
                     return value;
                 throw new DictionaryIndexInvalidException("DataTableLookup", type.Name);
             }
+            /// <summary>
+            /// Returns the index of the data table associated with the T type generic, throws error if not present
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <returns></returns>
+            /// <exception cref="DictionaryIndexInvalidException"></exception>
             public static int GetDataTableIndex<T>()
             {
                 if (DataTableLookup.TryGetValue(typeof(T), out var value))
                     return value;
                 throw new DictionaryIndexInvalidException("DataTableLookup", typeof(T).Name);
             }
-            public static CHook* GetDataTable<T>() where T : unmanaged
-            {
-                return TablePtr->getDataTableFromIndex(GetDataTableIndex<T>());
-            }
-            internal static CHook* GetDataTableFromIndex(int index)
-            {
-                return TablePtr->getDataTableFromIndex(index);
-            }
-
+            /// <summary>
+            /// Returns the hook of the data table associated with the T type generic
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <returns></returns>
+            public static CHook* GetDataTable<T>() where T : unmanaged => MainTablePtr->getDataTableFromIndex(GetDataTableIndex<T>());
+            /// <summary>
+            /// Returns the hook of the data table based on data table index.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
+            internal static CHook* GetDataTableFromIndex(int index) => MainTablePtr->getDataTableFromIndex(index);
+            /// <summary>
+            /// Create, allocate and add the main lookup table. Should only be called one.
+            /// </summary>
+            /// <param name="size"></param>
             internal static void CreateTable(int size)
             {
                 var bytes = ( sizeof(int) * 3 ) + ( sizeof(IntPtr) * size );
-                Table = Malloc(bytes);
-                MemSet(Table, 0, bytes);
-                var table = (CLookupTable*)Table;
+                MainTable = Malloc(bytes);
+                MemSet(MainTable, 0, bytes);
+                var table = (CLookupTable*)MainTable;
                 *table = new CLookupTable();
                 table->Entries = 0;
                 table->MaxSize = size;
                 table->AllocatedBytes = bytes;
             }
-
+            /// <summary>
+            /// Create, allocate and add the Collision tree. Should only be called once.
+            /// </summary>
+            /// <param name="size"></param>
             internal static void CreateCollisionTree(int size)
             {
                 var bytes = sizeof(AABBTree);
@@ -507,7 +721,7 @@ namespace ECS
                 MemSet(entry, 0, bytes);
                 var tree = (AABBTree*)entry;
                 *tree = new AABBTree(size);
-                TablePtr->Add(entry);
+                MainTablePtr->Add(entry);
             }
         }
 
@@ -534,6 +748,10 @@ namespace ECS
             private bool limitReached;
             private Predicate<T> predicateCheck;
             private CLinkableTable* currentTable;
+            /// <summary>
+            /// Starts and waits for the hook search to complete, performs action when matching object is found
+            /// </summary>
+            /// <param name="onFindNext">Action to perform per object</param>
             public void Start(Action<T> onFindNext)
             {
                 var _this = this;
@@ -555,12 +773,21 @@ namespace ECS
                     _this.currentTable = _this.currentTable->Next;
                 }
             }
+            /// <summary>
+            /// Resets the hook iterator, allows for re-use of hook iterator
+            /// </summary>
             public void Reset()
             {
                 currentTable = internalHook->Start;
                 totalReturned = 0;
                 limitReached = expectedLimit > 0 ? false : true;
             }
+            /// <summary>
+            /// Object iterator shortcut. Create an object iterator for all objects in the object table
+            /// </summary>
+            /// <param name="expectedLimit"></param>
+            /// <param name="check"></param>
+            /// <returns></returns>
             public static CParallelHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
             {
                 var iterator = new CParallelHookIterator<CObject>();
@@ -586,7 +813,9 @@ namespace ECS
             private bool limitReached;
             private Predicate<T> predicateCheck;
             private CLinkableTable* currentTable;
-
+            /// <summary>
+            /// Finds the next object that matches the search criteria
+            /// </summary>
             public T* Next
             {
                 get
@@ -615,6 +844,9 @@ namespace ECS
                     return next;
                 }
             }
+            /// <summary>
+            /// Resets the hook iterator, allows for re-use of hook iterator
+            /// </summary>
             public void Reset()
             {
                 currentTable = internalHook->Start;
@@ -622,7 +854,12 @@ namespace ECS
                 totalReturned = 0;
                 limitReached = expectedLimit > 0 ? false : true;
             }
-
+            /// <summary>
+            /// Object iterator shortcut. Create an object iterator for all objects in the object table
+            /// </summary>
+            /// <param name="expectedLimit"></param>
+            /// <param name="check"></param>
+            /// <returns></returns>
             public static CHookIterator<CObject> GetIterator(int expectedLimit, Predicate<CObject> check)
             {
                 var iterator = new CHookIterator<CObject>();
@@ -647,6 +884,9 @@ namespace ECS
             public int TableSize;
             public IntPtr Empty;
             public CLinkableTable* Start;
+            /// <summary>
+            /// Empty data entry. Used to check if data is valid/exists. Allows for byte-removal of data if no data type is used.
+            /// </summary>
             public ReadOnlySpan<byte> EmptySpan
             {
                 get
@@ -658,6 +898,10 @@ namespace ECS
                 }
             }
             public int MaxCapacity => Count * TableSize;
+            /// <summary>
+            /// Returns the max size of all tables combined attached to this hook
+            /// </summary>
+            /// <returns></returns>
             public int TotalHookSize()
             {
                 int size = 0;
@@ -669,6 +913,10 @@ namespace ECS
                 }
                 return size;
             }
+            /// <summary>
+            /// Returns the total number of entries of all tables combined attached to this hook
+            /// </summary>
+            /// <returns></returns>
             public int TotalHookCount()
             {
                 int count = 0;
@@ -680,12 +928,24 @@ namespace ECS
                 }
                 return count;
             }
+            /// <summary>
+            /// Allows for indexing of all tables' entries.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
             private CTuple<int, int> GetTableAndEntryIndexes(int index)
             {
                 var tableIndex = index / TableSize;
                 var entryIndex = index - ( tableIndex * TableSize );
                 return new CTuple<int, int>(tableIndex, entryIndex);
             }
+            /// <summary>
+            /// Allows for indexing of all tables.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <returns></returns>
+            /// <exception cref="LinkedTableNullException"></exception>
             private CLinkableTable* GetTable<T>(int index) where T : unmanaged
             {
                 var table = Start;
@@ -695,7 +955,12 @@ namespace ECS
                     throw new LinkedTableNullException(index, Count);
                 return table;
             }
-
+            /// <summary>
+            /// Find entry by reference (pointer)
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="predicate"></param>
+            /// <returns></returns>
             public T* FindRef<T>(PredicateIn<T> predicate) where T : unmanaged
             {
                 var table = Start;
@@ -712,6 +977,13 @@ namespace ECS
                 }
                 return null;
             }
+            /// <summary>
+            /// Find entry by instance (copy)
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="predicate"></param>
+            /// <returns></returns>
+            /// <exception cref="ObjectPointerNullException"></exception>
             public T Find<T>(PredicateIn<T> predicate) where T : unmanaged
             {
                 var item = FindRef(predicate);
@@ -719,15 +991,32 @@ namespace ECS
                     throw new ObjectPointerNullException();
                 return *item;
             }
-
+            /// <summary>
+            /// Get entry by reference (pointer)
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <returns></returns>
             public T* GetRef<T>(int index) where T : unmanaged
             {
                 var tuple = GetTableAndEntryIndexes(index);
                 return GetTable<T>(tuple.Item1)->GetRef<T>(tuple.Item2);
             }
-
+            /// <summary>
+            /// Get entry by instance (copy)
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <returns></returns>
             public T Get<T>(int index) where T : unmanaged => *GetRef<T>(index);
-
+            /// <summary>
+            /// Add a new entry to the hook and dynamically append it to the next available table.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="item"></param>
+            /// <returns></returns>
+            /// <exception cref="LinkedTableNullException"></exception>
+            /// <exception cref="LinkedTableNotNullException"></exception>
             public int AddNew<T>(T item) where T : unmanaged
             {
                 var index = 0;
@@ -755,6 +1044,13 @@ namespace ECS
                 index += table->Next->AddNew(item);
                 return index;
             }
+            /// <summary>
+            /// Remove an entry from the hook and dynamically remove it from the associated table (type-based)
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <exception cref="IndexInvalidException"></exception>
+            /// <exception cref="LinkedTableNullException"></exception>
             public void RemoveAt<T>(int index) where T : unmanaged
             {
                 if (index < 0 || index >= MaxCapacity)
@@ -771,6 +1067,12 @@ namespace ECS
                     table->WriteIndex = 0;
                 }
             }
+            /// <summary>
+            /// Remove an entry from the hook and dynamically remove it from the associated table (size-based)
+            /// </summary>
+            /// <param name="index"></param>
+            /// <exception cref="IndexInvalidException"></exception>
+            /// <exception cref="LinkedTableNullException"></exception>
             public void ByteRemovalAt(int index)
             {
                 if (index < 0 || index >= MaxCapacity)
@@ -792,7 +1094,10 @@ namespace ECS
                 table->Next = CLinkableTable.NewTable(table, TableSize, new T());
                 Count++;
             }
-            
+            /// <summary>
+            /// Dynamically add a new table onto the end of the last table.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
             public void AppendNewTable<T>() where T : unmanaged
             {
                 var table = Start;
@@ -800,20 +1105,11 @@ namespace ECS
                     table = table->Next;
                 NewTable<T>(table);
             }
-            
-            public void DebugHook<T>() where T : unmanaged
-            {
-                var total = 0;
-                var table = Start;
-                for (int i = 0; i < Count; i++)
-                {
-                    total += table->DebugTable(new T());
-                    table = table->Next;
-                }
-                Console.WriteLine("Total Tables: " + Count);
-                Console.WriteLine("Total Objects: " + total);
-            }
-            
+            /// <summary>
+            /// Create a new hook and tables with T type entries
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="size"></param>            
             public static void NewTableChain<T>(int size = 1024) where T : unmanaged
             {
                 var outer = Malloc(sizeof(CHook));
@@ -826,7 +1122,7 @@ namespace ECS
                 hook->Count = 1;
                 hook->TableSize = size;
                 hook->Start = CLinkableTable.NewTable(null, size, new T());
-                TablePtr->Add(outer);
+                MainTablePtr->Add(outer);
             }
         }
         /// <summary>
@@ -842,24 +1138,12 @@ namespace ECS
             public CLinkableTable* Previous;
             public CLinkableTable* Next;
             public byte Value0;
-
-            public int DebugTable<T>(T empty) where T : unmanaged
-            {
-                fixed (byte* ptr = &Value0)
-                {
-                    var counter = 0;
-                    for (int i = 0; i < MaxSize; i++)
-                    {
-                        var Object = (T*)ptr + i;
-                        if (!Object->Equals(empty))
-                            counter++;
-                    }
-                    Console.WriteLine(counter + " / " + Count);
-                    return counter;
-                }
-            }
-
-            public void ClearTable<T>(T empty) where T : unmanaged
+            /// <summary>
+            /// Empty the table of all data. Similar to MemSet but sets each entry to empty rather than every byte.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="empty"></param>
+            private void ClearTable<T>(T empty) where T : unmanaged
             {
                 fixed (byte* ptr = &Value0)
                 {
@@ -869,7 +1153,13 @@ namespace ECS
                     }
                 }
             }
-
+            /// <summary>
+            /// Add a new entry to this table specifically, not the table's hook.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="item"></param>
+            /// <returns></returns>
+            /// <exception cref="IndexInvalidException"></exception>
             public int AddNew<T>(T item) where T : unmanaged
             {
                 if (WriteIndex >= MaxSize || Count >= MaxSize)
@@ -881,7 +1171,13 @@ namespace ECS
                 }
                 return WriteIndex - 1;
             }
-
+            /// <summary>
+            /// Remove an entry from this table specifically, not the table's hook. (type-based)
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <param name="empty"></param>
+            /// <exception cref="IndexInvalidException"></exception>
             public void RemoveAt<T>(int index, T empty) where T : unmanaged
             {
                 if (index < 0 || index >= MaxSize)
@@ -894,6 +1190,13 @@ namespace ECS
                     Count--;
                 }
             }
+            /// <summary>
+            /// Remove an entry from this table specifically, not the table's hook. (size-based)
+            /// </summary>
+            /// <param name="index"></param>
+            /// <param name="dataSize"></param>
+            /// <param name="emptySpan"></param>
+            /// <exception cref="IndexInvalidException"></exception>
             public void ByteRemovalAt(int index, int dataSize, ReadOnlySpan<byte> emptySpan)
             {
                 if (index < 0 || index >= MaxSize)
@@ -907,11 +1210,26 @@ namespace ECS
                     Count--;
                 }
             }
+            /// <summary>
+            /// Try to get the entry at index, returns true and outs a reference to the entry if it does not equal an empty entry.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="empty"></param>
+            /// <param name="index"></param>
+            /// <param name="ptr"></param>
+            /// <returns></returns>
             public bool TryGetRef<T>(T empty, int index, out T* ptr) where T : unmanaged
             {
                 ptr = GetRef<T>(index);
                 return !ptr->Equals(empty);
             }
+            /// <summary>
+            /// Directly get entry at index by reference (pointer). Not guaranteed to be set to any actual data.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <returns></returns>
+            /// <exception cref="IndexInvalidException"></exception>
             public T* GetRef<T>(int index) where T : unmanaged
             {
                 if (index < 0 || index >= MaxSize)
@@ -921,12 +1239,25 @@ namespace ECS
                     return (T*)ptr + index;
                 }
             }
+            /// <summary>
+            /// Directly get entry at index by instance (copy). Not guaranteed to be set to any actual data.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="index"></param>
+            /// <returns></returns>
             public T Get<T>(int index) where T : unmanaged
             {
                 return *GetRef<T>(index);
             }
-
-            public static CLinkableTable* NewTable<T>(CLinkableTable* previous, int size, T empty) where T : unmanaged
+            /// <summary>
+            /// Create a new table and return its pointer. Used in conjunction with a new hook or appending a new table to an existing hook. Not used on its own.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="previous"></param>
+            /// <param name="size"></param>
+            /// <param name="empty"></param>
+            /// <returns></returns>
+            internal static CLinkableTable* NewTable<T>(CLinkableTable* previous, int size, T empty) where T : unmanaged
             {
                 var bytes = ( sizeof(int) * 5 ) + sizeof(IntPtr) + ( sizeof(CLinkableTable*) * 2 ) + ( sizeof(T) * size );
                 var entry = Malloc(bytes);
@@ -948,6 +1279,9 @@ namespace ECS
         /// </summary>
         internal struct CSpriteSheetInfo : IDisposable
         {
+            /// <summary>
+            /// Private type to hold individual sprite data on a sprite sheet.
+            /// </summary>
             private struct IntRectIndex
             {
                 public int Index;
@@ -983,6 +1317,12 @@ namespace ECS
                     }
                 }
             }
+            /// <summary>
+            /// Get sprite data on sprite sheet using its index.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
+            /// <exception cref="IndexInvalidException"></exception>
             public IntRect GetTextureRectAtIndex(int index)
             {
                 if (index < 0 || index >= SpriteCount)
@@ -992,6 +1332,9 @@ namespace ECS
                     return ( ( (IntRectIndex*)*ptr ) + index )->Rect;
                 }
             }
+            /// <summary>
+            /// Dispose of the texture. Frees the allocated integer rects for each sprite.
+            /// </summary>
             public void Dispose()
             {
                 Free(IntRects);
@@ -1002,6 +1345,9 @@ namespace ECS
         /// </summary>
         internal struct CAnimationEntry : IDisposable
         {
+            /// <summary>
+            /// Represents a single frame in an animation. Accessible throughout the core as CTexture saves a copy to keep track of the current animation state.
+            /// </summary>
             public struct AnimState
             {
                 public static readonly AnimState Null = new AnimState();
@@ -1027,7 +1373,12 @@ namespace ECS
                 MemSet(Frames, 0, (int)( sizeof(AnimState) * frameCount ));
                 HashCode = name.GetHashCode();
             }
-
+            /// <summary>
+            /// Set a frame in an animation. Allows for dynamic creation of animations.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <param name="texture"></param>
+            /// <exception cref="IndexInvalidException"></exception>
             public void SetFrame(int index, ref CTexture texture)
             {
                 if (index < 0 || index >= FrameCount)
@@ -1038,7 +1389,13 @@ namespace ECS
                     *( anim + index ) = new AnimState(texture.TexturePtr, index);
                 }
             }
-
+            /// <summary>
+            /// Set the internal texture of an object to the pointer saved at the animation's index.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <param name="texture"></param>
+            /// <param name="animation"></param>
+            /// <exception cref="IndexInvalidException"></exception>
             public void SetTexture(int index, ref CTexture texture, ref CAnimation animation)
             {
                 if (index < 0 || index >= FrameCount)
@@ -1052,7 +1409,9 @@ namespace ECS
                     texture.UpdateRectOnly();
                 }
             }
-
+            /// <summary>
+            /// Dispose of the animation. Frees the frames' pointer.
+            /// </summary>
             public void Dispose()
             {
                 Free(Frames);
@@ -1072,6 +1431,11 @@ namespace ECS
             {
                 Free(TexturePtr);
             }
+            /// <summary>
+            /// Create a new sprite from a file. Generates blank sprite sheet info.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <returns></returns>
             private static CTextureEntry GetSprite(string filename)
             {
                 var rect = new IntRect();
@@ -1083,6 +1447,11 @@ namespace ECS
                 entry.SheetInfo = new CSpriteSheetInfo();
                 return entry;
             }
+            /// <summary>
+            /// Create a new sprite from a file. Generates sprite sheet info as a single sprite.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <returns></returns>
             public static CTextureEntry NewSprite(string filename)
             {
                 var entry = GetSprite(filename);
@@ -1090,6 +1459,12 @@ namespace ECS
                 entry.SheetInfo = new CSpriteSheetInfo(size, size);
                 return entry;
             }
+            /// <summary>
+            /// Create a new sprite sheet from a file. Generates sprite sheet info as a whole sprite sheet.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <param name="spriteSize"></param>
+            /// <returns></returns>
             public static CTextureEntry NewSpriteSheet(string filename, Vector2u spriteSize)
             {
                 var entry = GetSprite(filename);
@@ -1102,22 +1477,42 @@ namespace ECS
         /// </summary>
         public struct Objects
         {
+            /// <summary>
+            /// Add T type data to the object. Inserts the data in a data table and adds its entry index to the object's metadata.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="cObject"></param>
+            /// <param name="data"></param>
             internal static void AddObjectData<T>(CObject cObject, T data) where T : unmanaged
             {
                 var table = CLookupTable.GetDataTable<T>();
                 var index = table->AddNew(data);
                 cObject.Meta->Insert(CLookupTable.GetDataTableIndex<T>(), index, (IntPtr)table->GetRef<T>(index));
             }
+            /// <summary>
+            /// Create a new object and return a copy of it. Each time the ID increments, this should be called.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
             internal static CObject AddNewObject(long index)
             {
                 var obj = CObject.New(index);
                 ObjectTablePtr->AddNew(obj);
                 return obj;
             }
+            /// <summary>
+            /// Removes the object from the object table. Clears its entry but does not call Dispose/Destroy on it.
+            /// </summary>
+            /// <param name="index"></param>
             internal static void RemoveObjectAtIndex(int index)
             {
                 ObjectTablePtr->RemoveAt<CObject>(index);
             }
+            /// <summary>
+            /// Get an object based on its saved name. Requires CString data.
+            /// </summary>
+            /// <param name="name"></param>
+            /// <returns></returns>
             public static CObject Get(string name)
             {
                 var ptr = GetPointer((in CString _string) => _string.Equals(name));
@@ -1125,7 +1520,19 @@ namespace ECS
                     return CObject.Null;
                 return *ptr;
             }
+            /// <summary>
+            /// Get T type data from an object based on its saved name. Requires CString data.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="name"></param>
+            /// <returns></returns>
             public static T GetData<T>(string name) where T : unmanaged => Get(name).GetData<T>();
+            /// <summary>
+            /// Get pointer to an object based on T type data search criteria.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="predicate"></param>
+            /// <returns></returns>
             internal static CObject* GetPointer<T>(PredicateIn<T> predicate) where T : unmanaged
             {
                 var index = CLookupTable.GetDataTableIndex<T>();
@@ -1142,28 +1549,12 @@ namespace ECS
                 }
                 return null;
             }
-            internal static CObject* GetPointer<T, U>(PredicateIn<T> predicate) where T : unmanaged where U : unmanaged
-            {
-                var index = CLookupTable.GetDataTableIndex<T>();
-                var index2 = CLookupTable.GetDataTableIndex<U>();
-
-                var tableCount = CLookupTable.GetDataTableFromIndex(index)->TotalHookCount();
-                var tableCount2 = CLookupTable.GetDataTableFromIndex(index2)->TotalHookCount();
-
-                var size = Math.Min(tableCount, tableCount2);
-
-                var iterator = CHookIterator<CObject>.GetIterator(size, x => x.HasDataOf(index) && x.HasDataOf(index2));
-                var next = iterator.Next;
-                while (next != null)
-                {
-                    if (predicate(in *next->GetDataPointer<T>()))
-                    {
-                        return next;
-                    }
-                    next = iterator.Next;
-                }
-                return null;
-            }
+            /// <summary>
+            /// Iterates over the object table. Objects with T type data are 'actioned'. Accesses T type data as reference.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="action"></param>
+            /// <param name="multi_threaded"></param>
             public static void Iterate<T>(Ref<T> action, bool multi_threaded = false) where T : unmanaged
             {
                 var index = CLookupTable.GetDataTableIndex<T>();
@@ -1188,6 +1579,13 @@ namespace ECS
                     }
                 }
             }
+            /// <summary>
+            /// Iterates over the object table. Objects with T AND U type data are 'actioned'. Accesses T AND U type data as reference.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <typeparam name="U"></typeparam>
+            /// <param name="action"></param>
+            /// <param name="multi_threaded"></param>
             public static void Iterate<T, U>(RefRef<T, U> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged
             {
                 var index = CLookupTable.GetDataTableIndex<T>();
@@ -1219,6 +1617,14 @@ namespace ECS
                     }
                 }
             }
+            /// <summary>
+            /// Iterates over the object table. Objects with T, U AND V type data are 'actioned'. Accesses T, U AND V type data as reference.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <typeparam name="U"></typeparam>
+            /// <typeparam name="V"></typeparam>
+            /// <param name="action"></param>
+            /// <param name="multi_threaded"></param>
             public static void Iterate<T, U, V>(RefRefRef<T, U, V> action, bool multi_threaded = false) where T : unmanaged where U : unmanaged where V : unmanaged
             {
                 var index = CLookupTable.GetDataTableIndex<T>();
@@ -1255,7 +1661,12 @@ namespace ECS
                     }
                 }
             }
-
+            /// <summary>
+            /// Iterates over the object table. Objects with T type data are 'actioned'. Accesses T type data AND the object itself as reference.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="action"></param>
+            /// <param name="mutli_threaded"></param>
             public static void IterateWithObject<T>(RefObject<T, CObject> action, bool mutli_threaded = false) where T : unmanaged
             {
                 var index = CLookupTable.GetDataTableIndex<T>();
@@ -1281,7 +1692,13 @@ namespace ECS
                     }
                 }
             }
-
+            /// <summary>
+            /// Iterates over the object table. Objects with T AND U type data are 'actioned'. Accesses T AND U type data AND the object itself as reference.
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <typeparam name="U"></typeparam>
+            /// <param name="action"></param>
+            /// <param name="mutli_threaded"></param>
             public static void IterateWithObject<T, U>(RefRefObject<T, U, CObject> action, bool mutli_threaded = false) where T : unmanaged where U : unmanaged
             {
                 var index = CLookupTable.GetDataTableIndex<T>();
@@ -1328,7 +1745,10 @@ namespace ECS
                 public Predicate<CObject> UniversalCheck;
             }
             private static CollisionCache CCache = new CollisionCache();
-            public static void PossibleCollisionQuery()
+            /// <summary>
+            /// Update the collision tree publically. Should run once during every collision subsystem update.
+            /// </summary>
+            public static void UpdateCollisionTree()
             {
 
                 if(!CCache.IsSet)
@@ -1375,6 +1795,11 @@ namespace ECS
         /// </summary>
         internal struct Textures
         {
+            /// <summary>
+            /// Try to find the specified texture. If this fails, attempt to load the texture from the file first then return it.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <returns></returns>
             public static IntPtr TryAddTexture(string filename)
             {
                 var ptr = FindTexture(filename);
@@ -1382,33 +1807,44 @@ namespace ECS
                     ptr = NewTexture(filename);
                 return ptr;
             }
-            public static IntPtr FindTexture(string filename)
-            {
-                return FindTexture(filename.GetHashCode());
-            }
-            public static IntPtr FindTexture(int hashCode)
+            /// <summary>
+            /// Find texture by filename. Returns IntPtr.Zero on failure.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <returns></returns>
+            public static IntPtr FindTexture(string filename) => FindTexture(filename.GetHashCode());
+            /// <summary>
+            /// Find texture based on unique hashcode generated from the filename.
+            /// </summary>
+            /// <param name="hashCode"></param>
+            /// <returns></returns>
+            private static IntPtr FindTexture(int hashCode)
             {
                 var entry = TextureTablePtr->FindRef((in CTextureEntry x) => x.HashCode == hashCode);
                 if (entry == null)
                     return IntPtr.Zero;
                 return (IntPtr)entry;
             }
+            /// <summary>
+            /// Add a new texture entry to the texture table. As a single sprite.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <returns></returns>
             public static IntPtr NewTexture(string filename)
             {
                 var index = TextureTablePtr->AddNew(CTextureEntry.NewSprite(filename));
                 return (IntPtr)TextureTablePtr->GetRef<CTextureEntry>(index);
             }
+            /// <summary>
+            /// Add a new texture entry to the texture table. As a sprite sheet.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <param name="individualSpriteSize"></param>
+            /// <returns></returns>
             public static IntPtr NewSpriteSheet(string filename, Vector2u individualSpriteSize)
             {
                 var index = TextureTablePtr->AddNew(CTextureEntry.NewSpriteSheet(filename, individualSpriteSize));
                 return (IntPtr)TextureTablePtr->GetRef<CTextureEntry>(index);
-            }
-            public static IntRect GetSpriteRectFromSheet(string filename, int index)
-            {
-                var entry = FindTexture(filename);
-                if (entry == IntPtr.Zero)
-                    return new IntRect();
-                return ((CTextureEntry*)entry)->SheetInfo.GetTextureRectAtIndex(index);
             }
         }
         /// <summary>
@@ -1416,6 +1852,12 @@ namespace ECS
         /// </summary>
         internal struct Animations
         {
+            /// <summary>
+            /// Try to find the specified animation. If this fails, attempt to load the animation from the file first then return it.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <param name="frame_count"></param>
+            /// <returns></returns>
             public static IntPtr TryAddAnimation(string filename, uint frame_count)
             {
                 var ptr = FindAnimation(filename, frame_count);
@@ -1423,17 +1865,32 @@ namespace ECS
                     ptr = NewAnimation(filename, frame_count);
                 return ptr;
             }
-            public static IntPtr FindAnimation(string filename, uint frame_count)
-            {
-                return FindAnimation(filename.GetHashCode(), frame_count);
-            }
-            public static IntPtr FindAnimation(int hashCode, uint frame_count)
+            /// <summary>
+            /// Find animation by filename and the number of frames in the animation. Returns IntPtr.Zero on failure.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <param name="frame_count"></param>
+            /// <returns></returns>
+            public static IntPtr FindAnimation(string filename, uint frame_count) => FindAnimation(filename.GetHashCode(), frame_count);
+            /// <summary>
+            /// Find animation based on unique hashcode generated from the filename and the number of frames in the animation.
+            /// </summary>
+            /// <param name="hashCode"></param>
+            /// <param name="frame_count"></param>
+            /// <returns></returns>
+            private static IntPtr FindAnimation(int hashCode, uint frame_count)
             {
                 var entry = AnimationTablePtr->FindRef((in CAnimationEntry x) => x.HashCode == hashCode && x.FrameCount == frame_count);
                 if (entry == null)
                     return IntPtr.Zero;
                 return (IntPtr)entry;
             }
+            /// <summary>
+            /// Adds a new animation entry to the animation table. All frames are blank and must be set one by one before use.
+            /// </summary>
+            /// <param name="filename"></param>
+            /// <param name="frame_count"></param>
+            /// <returns></returns>
             public static IntPtr NewAnimation(string filename, uint frame_count)
             {
                 var index = AnimationTablePtr->AddNew(new CAnimationEntry(filename, frame_count));
@@ -1447,6 +1904,12 @@ namespace ECS
         {
             public int MaxSize;
             public CTuple<int, IntPtr> DataPtr;
+            /// <summary>
+            /// Get T type data as reference. Does not guarantee the data is of T type. 
+            /// </summary>
+            /// <typeparam name="T"></typeparam>
+            /// <param name="tableIndex">Must match the DataTableIndex of T type</param>
+            /// <returns></returns>
             public T* Get<T>(int tableIndex) where T : unmanaged
             {
                 if (tableIndex < 0 || tableIndex >= MaxSize)
@@ -1456,6 +1919,12 @@ namespace ECS
                     return (T*)( ptrPtr + tableIndex )->Item2;
                 }
             }
+            /// <summary>
+            /// Insert a pointer to an existing data entry.
+            /// </summary>
+            /// <param name="tableIndex">DataTableIndex of T type</param>
+            /// <param name="index">Index of data entry in table</param>
+            /// <param name="ptr"></param>
             public void Insert(int tableIndex, int index, IntPtr ptr)
             {
                 if (tableIndex < 0 || tableIndex >= MaxSize)
@@ -1465,15 +1934,11 @@ namespace ECS
                     *( ptrPtr + tableIndex ) = new CTuple<int, IntPtr>(index, ptr);
                 }
             }
-            public void Remove(int tableIndex)
-            {
-                if (tableIndex < 0 || tableIndex >= MaxSize)
-                    return;
-                fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
-                {
-                    *( ptrPtr + tableIndex ) = CTuple<int, IntPtr>.Null;
-                }
-            }
+            /// <summary>
+            /// Checks if a data entry at tableIndex exists.
+            /// </summary>
+            /// <param name="tableIndex"></param>
+            /// <returns></returns>
             public bool HasDataOf(int tableIndex)
             {
                 if (tableIndex < 0 || tableIndex >= MaxSize)
@@ -1483,6 +1948,11 @@ namespace ECS
                     return ( ptrPtr + tableIndex )->Item2 != IntPtr.Zero;
                 }
             }
+            /// <summary>
+            /// Checks if data entries of different types all exist.
+            /// </summary>
+            /// <param name="tableIndexes"></param>
+            /// <returns></returns>
             public bool HasDataOfAll(int[] tableIndexes)
             {
                 fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
@@ -1498,9 +1968,13 @@ namespace ECS
                     return true;
                 }
             }
+            /// <summary>
+            /// Create a new blank MetaData object. This is not saved in a table. Only to the CObject that created it.
+            /// </summary>
+            /// <returns></returns>
             public static IntPtr New()
             {
-                var size = TablePtr->Entries + 1;
+                var size = MainTablePtr->Entries + 1;
                 var bytes = sizeof(int) + ( sizeof(CTuple<int, IntPtr>) * size );
                 var ptr = Malloc(bytes);
                 MemSet(ptr, 0, bytes);
@@ -1511,6 +1985,9 @@ namespace ECS
                 *(CMetaData*)ptr = metaSlot;
                 return ptr;
             }
+            /// <summary>
+            /// Destroys the MetaData object and removes each data entry from their respective tables. As the type of each data entry is unknown, the data is removed by data size (clearing bytes manually).
+            /// </summary>
             public void Dispose()
             {
                 fixed (CTuple<int, IntPtr>* ptrPtr = &DataPtr)
@@ -1616,7 +2093,9 @@ namespace ECS.Library
                 this.MouseButtonPressed += OnMousePress;
                 this.MouseButtonReleased += OnMouseRelease;
             }
-
+            /// <summary>
+            /// Closes the window and writes debug logs if available.
+            /// </summary>
             public override void Close()
             {
                 base.Close();
@@ -1625,29 +2104,13 @@ namespace ECS.Library
 #endif
             }
 
-            private void OnQuit(object sender, EventArgs args)
-            {
-                this.Close();
-            }
-
-            private void OnKeyPress(object sender, KeyEventArgs args)
-            {
-                Input.SetKeyPressedArgs(args);
-            }
-
-            private void OnKeyRelease(object sender, KeyEventArgs args)
-            {
-                Input.SetKeyReleasedArgs(args);
-            }
-
-            private void OnMousePress(object sender, MouseButtonEventArgs args)
-            {
-                Input.SetMouseButtonPressedArgs(args);
-            }
-            private void OnMouseRelease(object sender, MouseButtonEventArgs args)
-            {
-                Input.SetMouseButtonReleasedArgs(args);
-            }
+            /// Input methods
+            private void OnQuit(object sender, EventArgs args) => this.Close();
+            private void OnKeyPress(object sender, KeyEventArgs args) => Input.SetKeyPressedArgs(args);
+            private void OnKeyRelease(object sender, KeyEventArgs args) => Input.SetKeyReleasedArgs(args);
+            private void OnMousePress(object sender, MouseButtonEventArgs args) => Input.SetMouseButtonPressedArgs(args);
+            private void OnMouseRelease(object sender, MouseButtonEventArgs args) => Input.SetMouseButtonReleasedArgs(args);
+            ///
         }
 
         internal static Engine MainEngine = null;
@@ -1660,9 +2123,17 @@ namespace ECS.Library
         internal EngineWindow ThisWindow = null;
 
         private readonly List<string> setEngineFlags = new List<string>();
+        /// <summary>
+        /// User-defined setup subroutine. Typically for allocating resources and creating main menus.
+        /// </summary>
         public abstract void Initialise();
+        /// <summary>
+        /// User-defined engine settings. These control the main table allocation sizes and window dimensions. Allows for quick setting of specialised subsystems.
+        /// </summary>
         public virtual EngineSettings Settings => new EngineSettings(4, 1024, 1024, 10, new Vector2u(800, 600), "Window", false, false, false);
-        
+        /// <summary>
+        /// Main engine loop. Updates all subsystems. This is called while the render window is open.
+        /// </summary>
         private void GameLoop()
         {
             var delta = Time.DeltaTime;
@@ -1710,15 +2181,19 @@ namespace ECS.Library
 #endif
         }
 
-
-
-        protected virtual void StartSubsystems()
+        /// <summary>
+        /// Start all enabled subsystems. Sorts all subsystems afterwards and organises them based on priority.
+        /// </summary>
+        protected void StartSubsystems()
         {
             foreach (var item in Collection.Subsystems)
                 if (!item.IsStarted && item.IsEnabled)
                     item.Startup();
             Collection.SortSubsystems();
         }
+        /// <summary>
+        /// Stop the currently running engine. Closes the render window.
+        /// </summary>
         public static void Stop()
         {
             if (MainEngine != null)
@@ -1726,7 +2201,17 @@ namespace ECS.Library
                 MainWindow.Close();
             }
         }
+        /// <summary>
+        /// Get whether a commandline flag was set. Requires the engine to exist.
+        /// </summary>
+        /// <param name="flag"></param>
+        /// <returns></returns>
         public static bool IsEngineFlagSet(string flag) => MainEngine.setEngineFlags.Contains(flag);
+        /// <summary>
+        /// Start a user-defined engine. The engineType must inherit from the base engine. Also passes any available engine flags and sets them as true.
+        /// </summary>
+        /// <param name="engineType"></param>
+        /// <param name="engineFlags"></param>
         public static void Start(Type engineType, params string[] engineFlags)
         {
             if (engineType.IsSubclassOf(typeof(Engine)))
@@ -1832,6 +2317,12 @@ namespace ECS.Library
     internal static class Collection
     {
         internal static readonly List<Subsystem> Subsystems = new List<Subsystem>();
+        /// <summary>
+        /// Dynamically create a new subsystem of System type. Sets the priority of the subsystem and whether it can run in parallel to others.
+        /// </summary>
+        /// <typeparam name="System"></typeparam>
+        /// <param name="priority"></param>
+        /// <param name="parallel"></param>
         internal static void AddNewSubsystem<System>(int priority = 5, bool parallel = false) where System : Subsystem
         {
             priority = Maths.Maths.Clamp(priority, 0, 10);
@@ -1844,6 +2335,12 @@ namespace ECS.Library
                 Subsystems.Add(subsystem);
             }
         }
+        /// <summary>
+        /// Checks if required subsystems are implemented or not. These are determined by the user-defined engine settings.
+        /// </summary>
+        /// <param name="subsystemTypes"></param>
+        /// <exception cref="SubsystemNotImplementedException"></exception>
+        /// <exception cref="SubsystemImplementedException"></exception>
         internal static void SubsystemsToTestFor(params KeyValuePair<Type, bool>[] subsystemTypes)
         {
             foreach(var kvp in subsystemTypes)
@@ -1859,6 +2356,9 @@ namespace ECS.Library
         }
         internal static List<int> ValidSubIndexes = new List<int>();
         internal static readonly Dictionary<int, List<Subsystem>> SortedSubsystems = new Dictionary<int, List<Subsystem>>();
+        /// <summary>
+        /// Internal sort method for subsystems. Organises them by priority.
+        /// </summary>
         internal static void SortSubsystems()
         {
             ValidSubIndexes.Clear();
@@ -1921,6 +2421,11 @@ namespace ECS.Library
             }
         }
         internal static SubsystemFlags SystemFlags = new SubsystemFlags(true, true);
+        /// <summary>
+        /// Add a new data type and create a new data table for it. Throws an error if this is called outside of Engine.Initialise().
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <exception cref="DisallowedSubsystemAddFlagException"></exception>
         public static void AddNewDataType<T>() where T : unmanaged
         {
             if (SystemFlags.AddNewDataTypes)
@@ -1928,6 +2433,13 @@ namespace ECS.Library
             else
                 throw new DisallowedSubsystemAddFlagException(typeof(T).Name);
         }
+        /// <summary>
+        /// Add a new subsystem. Throws an error if this is called outside of Engine.Initialise().
+        /// </summary>
+        /// <typeparam name="System"></typeparam>
+        /// <param name="priority"></param>
+        /// <param name="parallel"></param>
+        /// <exception cref="DisallowedSubsystemAddFlagException"></exception>
         public static void AddNewSubsystem<System>(int priority = 5, bool parallel = false) where System : Subsystem
         {
             if (SystemFlags.AddNewSubsystems)
@@ -1935,7 +2447,9 @@ namespace ECS.Library
             else
                 throw new DisallowedSubsystemAddFlagException(typeof(System).Name);
         }
-
+        /// <summary>
+        /// Should not be called directly.
+        /// </summary>
         public Subsystem()
         {
             Name = GetType().Name;
@@ -1945,6 +2459,10 @@ namespace ECS.Library
         public bool IsStarted { get; private set; } = false;
         public int Priority { get; internal set; }
         public bool Parallelable { get; internal set; }
+        /// <summary>
+        /// Updates the subsystem with Time.DeltaTime. Called per frame if the subsystem is started and enabled.
+        /// </summary>
+        /// <param name="deltaSeconds"></param>
         public abstract void Update(float deltaSeconds);
         public virtual void Startup() { IsStarted = true; }
     }
@@ -2035,7 +2553,7 @@ namespace ECS.Library
 #endif
             }
     /// <summary>
-    /// Showcase subsystem, not currently used in examples, primarily used for testing physics implementations.
+    /// Showcase subsystem, not currently used in examples, primarily used for testing physics implementations. Should not be used.
     /// </summary>
     public class PhysicsSubsystem : Subsystem
     {
@@ -2067,6 +2585,9 @@ namespace ECS.Library
     /// </summary>
     public abstract class CollisionSubsystem : Subsystem
     {
+        /// <summary>
+        /// Checks if object should be excluded from collision based on data type criteria.
+        /// </summary>
         private static readonly Func<CObject, Type[], bool> excludeTypeCheck = (x, exclude) =>
         {
             for (var i = 0; i < exclude.Length; i++)
@@ -2076,10 +2597,19 @@ namespace ECS.Library
             }
             return true;
         };
+        /// <summary>
+        /// Checks if object should be included from collision based on data type criteria.
+        /// </summary>
         private static readonly Func<CObject, Type, bool> includeTypeCheck = (x, include) =>
         {
             return x.HasDataOf(include);
         };
+        /// <summary>
+        /// Get collisions of this object. Excluding collisions with objects with any data types in the exclude array.
+        /// </summary>
+        /// <param name="cObject"></param>
+        /// <param name="exclude"></param>
+        /// <returns></returns>
         public List<CObject> GetCollisionsOf(CObject cObject, params Type[] exclude)
         {
             unsafe
@@ -2090,6 +2620,12 @@ namespace ECS.Library
                 });
             }
         }
+        /// <summary>
+        /// Get collisions of this object. Including only collisions with objects with the Include data type.
+        /// </summary>
+        /// <typeparam name="Include"></typeparam>
+        /// <param name="cObject"></param>
+        /// <returns></returns>
         public List<CObject> GetCollisionsOf<Include>(CObject cObject) where Include : ICData
         {
             unsafe
@@ -2100,6 +2636,12 @@ namespace ECS.Library
                 });
             }
         }
+        /// <summary>
+        /// Get the first collision of this object. Excluding collisions with objects with any data types in the exclude array.
+        /// </summary>
+        /// <param name="cObject"></param>
+        /// <param name="exclude"></param>
+        /// <returns></returns>
         public CObject GetFirstCollisionOf(CObject cObject, params Type[] exclude)
         {
             unsafe
@@ -2110,6 +2652,12 @@ namespace ECS.Library
                 });
             }
         }
+        /// <summary>
+        /// Get the first collision of this object. Including only collisions with objects with the Include data type.
+        /// </summary>
+        /// <typeparam name="Include"></typeparam>
+        /// <param name="cObject"></param>
+        /// <returns></returns>
         public CObject GetFirstCollisionOf<Include>(CObject cObject) where Include : ICData
         {
             unsafe
@@ -2120,10 +2668,11 @@ namespace ECS.Library
                 });
             }
         }
-        public override void Update(float deltaSeconds)
-        {
-            Objects.PossibleCollisionQuery();
-        }
+        /// <summary>
+        /// Updates the collision tree. Must be called.
+        /// </summary>
+        /// <param name="deltaSeconds"></param>
+        public override void Update(float deltaSeconds) => Objects.UpdateCollisionTree();
         public override void Startup()
         {
             base.Startup();
@@ -2148,6 +2697,10 @@ namespace ECS.Library
     /// </summary>
     public class UISubsystem : Subsystem
     {
+        /// <summary>
+        /// Checks if any buttons were pressed based on mouse position and mouse button input.
+        /// </summary>
+        /// <param name="deltaSeconds"></param>
         public override void Update(float deltaSeconds)
         {
             Objects.Iterate((ref CButton button, ref CTransform transform) =>
@@ -2244,6 +2797,12 @@ namespace ECS.Graphics
     /// </summary>
     public static class GraphicsExtensions
     {
+        /// <summary>
+        /// Get absolute position of anchor pointer. Relative to window. E.g. TOP_LEFT = (0, 0) and BOTTOM_RIGHT = (Max Window Width, Max Window Height)
+        /// </summary>
+        /// <param name="anchor"></param>
+        /// <returns></returns>
+        /// <exception cref="InvalidEnumValueException"></exception>
         public static Vector2f GetAbsoluteFromAnchor(this Anchor anchor)
         {
             var windowDimensions = Engine.MainEngine.Settings.WindowDimensions;
@@ -2257,6 +2816,12 @@ namespace ECS.Graphics
                 _ => throw new InvalidEnumValueException(typeof(Anchor).Name, (int)anchor)
             };
         }
+        /// <summary>
+        /// Gets the relative position to an anchor. Get the absolute position of the anchor then add another position to it.
+        /// </summary>
+        /// <param name="anchor"></param>
+        /// <param name="position"></param>
+        /// <returns></returns>
         public static Vector2f GetRelativePositionToAnchor(this Anchor anchor, Vector2f position)
         {
             return anchor.GetAbsoluteFromAnchor() + position;
@@ -2267,6 +2832,9 @@ namespace ECS.Graphics
     /// </summary>
     public struct CTransform : ICData
     {
+        /// <summary>
+        /// Typically non-UI elements will use TOP_LEFT.
+        /// </summary>
         public Anchor Anchor
         {
             get
@@ -2345,6 +2913,9 @@ namespace ECS.Graphics
                 myInverseNeedUpdate = true;
             }
         }
+        /// <summary>
+        /// Internal SFML transform (taken from the SFML source code, not my function).
+        /// </summary>
         public SFMLTransform SFMLTransform
         {
             get
@@ -2370,6 +2941,9 @@ namespace ECS.Graphics
                 return myTransform;
             }
         }
+        /// <summary>
+        /// Internal SFML transform (taken from the SFML source code, not my function).
+        /// </summary>
         public SFMLTransform InverseTransform
         {
             get
@@ -2382,26 +2956,16 @@ namespace ECS.Graphics
                 return myInverseTransform;
             }
         }
-        private FloatRect GetGlobalBounds()
-        {
-            return SFMLTransform.TransformRect(GetLocalBounds());
-        }
-        private FloatRect GetLocalBounds()
-        {
-            return new FloatRect(0, 0, mySize.X, mySize.Y);
-        }
-        public bool ExpensiveIntersection(CTransform other)
-        {
-            return GetGlobalBounds().Intersects(other.GetGlobalBounds());
-        }
-        public Vector2f GetAnchoredPosition()
-        {
-            return myAnchor.GetRelativePositionToAnchor(myPosition);
-        }
-        internal unsafe bool ExpensiveIntersection(CTransform* other)
-        {
-            return GetGlobalBounds().Intersects(other->GetGlobalBounds());
-        }
+        private FloatRect GetGlobalBounds() => SFMLTransform.TransformRect(GetLocalBounds());
+        private FloatRect GetLocalBounds() => new FloatRect(0, 0, mySize.X, mySize.Y);
+        /// <summary>
+        /// Checks if this transform intersects another exactly. Rarely use.
+        /// </summary>
+        /// <param name="other"></param>
+        /// <returns></returns>
+        public bool ExpensiveIntersection(CTransform other) => GetGlobalBounds().Intersects(other.GetGlobalBounds());
+        public Vector2f GetAnchoredPosition() => myAnchor.GetRelativePositionToAnchor(myPosition);
+        internal unsafe bool ExpensiveIntersection(CTransform* other) => GetGlobalBounds().Intersects(other->GetGlobalBounds());
         public CTransform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation, Anchor anchor) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, anchor) { }
         public CTransform(float x, float y, uint height, uint width, float origin_x, float origin_y, float rotation) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), rotation, Anchor.TOP_LEFT) { }
         public CTransform(float x, float y, uint height, uint width, float origin_x, float origin_y) : this(new Vector2f(x, y), new Vector2u(height, width), new Vector2f(origin_x, origin_y), 0, Anchor.TOP_LEFT) { }
@@ -2462,6 +3026,9 @@ namespace ECS.Graphics
             texture.UpdateTexture(texture.TexturePtr);
             return texture;
         }
+        /// <summary>
+        /// Update only the texture coordinates. No need to entirely reset the texture, especially if changed every few frames for animation.
+        /// </summary>
         public void UpdateRectOnly()
         {
             var rect = Entry->SheetInfo.GetTextureRectAtIndex(Index);
@@ -2472,6 +3039,11 @@ namespace ECS.Graphics
             Vertices.Vertex2.TexCoords = new Vector2f(right, rect.Top);
             Vertices.Vertex3.TexCoords = new Vector2f(right, bottom);
         }
+        /// <summary>
+        /// Entirely update the texture with new vertices.
+        /// </summary>
+        /// <param name="texture"></param>
+        /// <param name="index"></param>
         public void UpdateTexture(IntPtr texture, int index = 0)
         {
             if (texture != IntPtr.Zero)
@@ -2494,12 +3066,6 @@ namespace ECS.Graphics
             _this.UpdateTexture(TexturePtr, index);
             return _this;
         }
-        public CTexture CalculateShouldDraw(AABB _this, AABB other)
-        {
-            var texture = this;
-            texture.ShouldDraw = other.Overlaps(_this);
-            return texture;
-        }
         public void SetColor(Color color)
         {
             Vertices.Vertex0.Color = color;
@@ -2513,10 +3079,13 @@ namespace ECS.Graphics
             return this;
         }
         public Vector2u GetSize => Entry->SheetInfo.IndividualSpriteSize;
-        public Color GetColor()
-        {
-            return Vertices.Vertex0.Color;
-        }
+        public Color GetColor() => Vertices.Vertex0.Color;
+        /// <summary>
+        /// Draws the texture on screen if valid. Can only be drawn from the dedicated render thread.
+        /// </summary>
+        /// <param name="target"></param>
+        /// <param name="states"></param>
+        /// <exception cref="RenderThreadCrossDrawingException"></exception>
         public void Draw(RenderTarget target, RenderStates states)
         {
 #if SEPARATE_RENDER_THREAD
@@ -2585,14 +3154,16 @@ namespace ECS.Maths
             var length = vector.Length();
             return new Vector2f(vector.X / length, vector.Y / length);
         }
-        public static Vector2f Direction(this Vector2f this_vector, Vector2f target)
-        {
-            return (target - this_vector).Normalise();
-        }
+        public static Vector2f Direction(this Vector2f this_vector, Vector2f target) => ( target - this_vector ).Normalise();
         public static Vector2f Min(this FloatRect box) => new Vector2f(Math.Min(box.Left, box.Left + box.Width), Math.Min(box.Top, box.Top + box.Height));
         public static Vector2f Max(this FloatRect box) => new Vector2f(Math.Max(box.Left, box.Left + box.Width), Math.Max(box.Top, box.Top + box.Height));
 
-        public static float ToRotation(this Vector2f direction) => ( (float)( Math.Atan2(direction.Y, direction.X) / ( 2 * Math.PI ) ) * 360f ) + 90f; // specific to SFML as 0, 0 is top-left
+        /// <summary>
+        /// Custom function to get a rotation from direction. Specific to SFML as 0, 0 is top-left
+        /// </summary>
+        /// <param name="direction"></param>
+        /// <returns></returns>
+        public static float ToRotation(this Vector2f direction) => ( (float)( Math.Atan2(direction.Y, direction.X) / ( 2 * Math.PI ) ) * 360f ) + 90f;
 
         public static float Min(float a, float b) => Math.Min(a, b);
         public static float Max(float a, float b) => Math.Max(a, b);
@@ -2605,7 +3176,7 @@ namespace ECS.Collections
 {
     using static CAllocation;
     /// <summary>
-    /// Static class for accessing unmanaged versions of managed C# collections ('System.Collections.Generic').
+    /// Static class for accessing unmanaged versions of managed C# collections ('System.Collections.Generic'). Very unsafe.
     /// </summary>
     internal static unsafe class Generic
     {
@@ -2629,24 +3200,37 @@ namespace ECS.Collections
                 Items = Malloc(AllocatedBytes);
                 MemSet(Items, 0, AllocatedBytes);
             }
-            public LocalArray(int entries, int size) : this(size)
-            {
-                Entries = entries;
-            }
+            /// <summary>
+            /// Ensure the index is valid and accessible. Equal to or greater than 0 OR less than MaxSize.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <exception cref="IndexInvalidException"></exception>
             private void ReinforceSize(int index)
             {
                 if (index < 0 || index >= MaxSize)
                     throw new IndexInvalidException("a local array", index, 0, MaxSize);
             }
+            /// <summary>
+            /// (GET) Returns a copy of the data at the index
+            /// (SET) Sets the value at the index by reference 
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
             public T this[int index]
             {
                 get => ReadAt(index);
                 set => ModifyAt(index, value);
             }
-            public void Add(T item)
-            {
-                ModifyAt(Entries++, item);
-            }
+            /// <summary>
+            /// Add a new entry to the array.
+            /// </summary>
+            /// <param name="item"></param>
+            public void Add(T item) => ModifyAt(Entries++, item);
+            /// <summary>
+            /// Returns the data by reference.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
             public T* ReadPointerAt(int index)
             {
                 ReinforceSize(index);
@@ -2655,6 +3239,11 @@ namespace ECS.Collections
                     return ( ( (T*)*ptr ) + index );
                 }
             }
+            /// <summary>
+            /// Returns the data by instance.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
             private T ReadAt(int index)
             {
                 ReinforceSize(index);
@@ -2663,6 +3252,11 @@ namespace ECS.Collections
                     return *( ( (T*)*ptr ) + index );
                 }
             }
+            /// <summary>
+            /// Modify the data at index. Sets it to the new data.
+            /// </summary>
+            /// <param name="index"></param>
+            /// <param name="new_data"></param>
             public void ModifyAt(int index, T new_data)
             {
                 ReinforceSize(index);
@@ -2671,6 +3265,10 @@ namespace ECS.Collections
                     *( (T*)*ptr + index ) = new_data;
                 }
             }
+            /// <summary>
+            /// Remove the entry at index and move all entries up to replace it. Similar to List.RemoveAt(int).
+            /// </summary>
+            /// <param name="index"></param>
             public void RemoveAt(int index)
             {
                 ReinforceSize(index);
@@ -2684,24 +3282,34 @@ namespace ECS.Collections
                     Entries--;
                 }
             }
+            /// <summary>
+            /// Resizes the array by reallocting it in a new block.
+            /// </summary>
+            /// <param name="size"></param>
             public void Resize(int size)
             {
                 Items = CGC.ResizeEntireBlock(Items, sizeOf, MaxSize, size);
                 MaxSize = size;
                 AllocatedBytes = sizeOf * size;
             }
+            /// <summary>
+            /// Clears the array by MemSet-ing everything to 0.
+            /// </summary>
             public void Clear()
             {
                 Entries = 0;
                 MemSet(Items, 0, AllocatedBytes);
             }
+            /// <summary>
+            /// Disposes of the array. Frees its collection.
+            /// </summary>
             public void Dispose()
             {
                 Free(Items);
             }
         }
         /// <summary>
-        /// Custom dictionary implementation. Used primarily in unmanaged code, specifically for collision trees.
+        /// Simple custom dictionary implementation. Used primarily in unmanaged code, specifically for collision trees.
         /// </summary>
         /// <typeparam name="T"></typeparam>
         public struct LocalDictionary<T, U> : IDisposable where T : unmanaged where U : unmanaged
@@ -2717,10 +3325,14 @@ namespace ECS.Collections
                 }
             }
             private LocalArray<Entry> entries;
-            public LocalDictionary(int capacity)
-            {
-                entries = new LocalArray<Entry>(capacity);
-            }
+            public LocalDictionary(int capacity) => entries = new LocalArray<Entry>(capacity);
+            /// <summary>
+            /// (GET) Returns a copy of the data at the index
+            /// (SET) Sets the value at the index by reference
+            /// </summary>
+            /// <param name="index"></param>
+            /// <returns></returns>
+            /// <exception cref="DictionaryIndexInvalidException"></exception>
             public U this[T index]
             {
                 get
@@ -2739,6 +3351,11 @@ namespace ECS.Collections
                     Add(index, value);
                 }
             }
+            /// <summary>
+            /// Checks if the dictionary contains the specified key-value entry. Returns -1 on failure, otherwise returns its index.
+            /// </summary>
+            /// <param name="key"></param>
+            /// <returns></returns>
             public int ContainsKey(T key)
             {
                 for (int i = 0; i < entries.Entries; i++)
@@ -2750,6 +3367,11 @@ namespace ECS.Collections
                 }
                 return -1;
             }
+            /// <summary>
+            /// Add a new key-value entry.
+            /// </summary>
+            /// <param name="key"></param>
+            /// <param name="value"></param>
             public void Add(T key, U value)
             {
                 if (ContainsKey(key) == -1)
@@ -2757,6 +3379,10 @@ namespace ECS.Collections
                     entries.Add(new Entry(key, value));
                 }
             }
+            /// <summary>
+            /// Removes an existing key-value entry.
+            /// </summary>
+            /// <param name="key"></param>
             public void Remove(T key)
             {
                 if (ContainsKey(key) is int _int && _int != -1)
@@ -2764,7 +3390,14 @@ namespace ECS.Collections
                     entries.RemoveAt(_int);
                 }
             }
+            /// <summary>
+            /// Resizes the internal array.
+            /// </summary>
+            /// <param name="size"></param>
             public void Resize(int size) => entries.Resize(size);
+            /// <summary>
+            /// Disposes of the dictionary.
+            /// </summary>
             public void Dispose()
             {
                 entries.Dispose();
@@ -2775,10 +3408,15 @@ namespace ECS.Collections
 namespace ECS.Physics
 {
     /// <summary>
-    /// Static physics functions. Used primarily for testing physics implementations.
+    /// Static physics functions. Used primarily for testing physics implementations. Requires PhysicsSubsystem implementation to do anything. Do not use.
     /// </summary>
     public static class Physics
     {
+        /// <summary>
+        /// Push a physics body in a direction.
+        /// </summary>
+        /// <param name="body"></param>
+        /// <param name="direction"></param>
         public static void ApplyForce(ref this CPhysicsBody body, Vector2f direction)
         {
             body.Velocity += direction;
@@ -2830,7 +3468,11 @@ namespace ECS.Collision
             this.maxY = maxy;
             this.SurfaceArea = ( maxX - minX ) * ( maxY - minY );
         }
-
+        /// <summary>
+        /// Checks if this AABB overlaps with another by comparing their min/max corners.
+        /// </summary>
+        /// <param name="other"></param>
+        /// <returns></returns>
         public bool Overlaps(AABB other)
         {
             return maxX > other.minX &&
@@ -2838,7 +3480,11 @@ namespace ECS.Collision
             maxY > other.minY &&
             minY < other.maxY;
         }
-
+        /// <summary>
+        /// Checks if this AABB contains another by comparing their min/max corners.
+        /// </summary>
+        /// <param name="other"></param>
+        /// <returns></returns>
         public bool Contains(AABB other)
         {
             return other.minX >= minX &&
@@ -2846,29 +3492,37 @@ namespace ECS.Collision
             other.minY >= minY &&
             other.maxY <= maxY;
         }
-
+        /// <summary>
+        /// Checks if this AABB contains a specific point by comparing min/max corners with the point's X/Y.
+        /// </summary>
+        /// <param name="point"></param>
+        /// <returns></returns>
         public bool Contains(Vector2f point)
         {
             return point.X >= minX && point.X <= maxX && point.Y >= minY && point.Y <= maxY;
         }
-
+        /// <summary>
+        /// Creates a new AABB from 2 AABBs by merging their min/max corners.
+        /// </summary>
+        /// <param name="other"></param>
+        /// <returns></returns>
         public AABB Merge(AABB other)
         {
             return new AABB(
             Min(minX, other.minX), Min(minY, other.minY),
             Max(maxX, other.maxX), Max(maxY, other.maxY));
         }
-
+        /// <summary>
+        /// Checks if 2 AABBs intersect. Returns a new AABB representing their intersection.
+        /// </summary>
+        /// <param name="other"></param>
+        /// <returns></returns>
         public AABB Intersection(AABB other)
         {
             return new AABB(
             Max(minX, other.minX), Max(minY, other.minY),
             Min(maxX, other.maxX), Min(maxY, other.maxY));
         }
-
-        public float GetWidth() => ( maxX - minX );
-        public float GetHeight() => ( maxY - minY );
-
     }
     /// <summary>
     /// Represents a bounding box attached to the AABB Tree. If this node has a valid object pointer, it is an object, if not, it is a box containing other nodes.
@@ -2883,7 +3537,15 @@ namespace ECS.Collision
         public int LeftNodeIndex;
         public int RightNodeIndex;
         public int NextNodeIndex;
+        /// <summary>
+        /// Checks if this node is a leaf. Leaves have no children and indicate an endpoint to the branch.
+        /// </summary>
+        /// <returns></returns>
         public bool IsLeaf() => LeftNodeIndex == NULL_NODE;
+        /// <summary>
+        /// Creates a new empty node. Does not append it to the tree.
+        /// </summary>
+        /// <returns></returns>
         public static AABBNode New()
         {
             AABBNode node = new AABBNode()
@@ -2930,9 +3592,12 @@ namespace ECS.Collision
             nodes.ReadPointerAt(start_size - 1)->NextNodeIndex = AABBNode.NULL_NODE;
             transformDataTableIndex = -1;
         }
+        /// <summary>
+        /// Add a new empty node. Does not add it to the tree. Resizes the node array if there is not enough capacity.
+        /// </summary>
+        /// <returns></returns>
         private int allocateNode()
         {
-            
             if (nextFreeNodeIndex == AABBNode.NULL_NODE)
             {
                 nodeCapacity += growthSize;
@@ -2948,7 +3613,6 @@ namespace ECS.Collision
                 nextFreeNodeIndex = allocatedNodeCount;
             }
             
-
             int nodeIndex = nextFreeNodeIndex;
             AABBNode* allocatedNode = nodes.ReadPointerAt(nodeIndex);
             allocatedNode->ParentNodeIndex = AABBNode.NULL_NODE;
@@ -2959,6 +3623,10 @@ namespace ECS.Collision
 
             return nodeIndex;
         }
+        /// <summary>
+        /// Remove a node from the node array. Does not remove it from the tree.
+        /// </summary>
+        /// <param name="nodeIndex"></param>
         private void deallocateNode(int nodeIndex)
         {
             AABBNode* deallocatedNode = nodes.ReadPointerAt(nodeIndex);
@@ -2966,7 +3634,10 @@ namespace ECS.Collision
             nextFreeNodeIndex = nodeIndex;
             allocatedNodeCount--;
         }
-
+        /// <summary>
+        /// Inserts a new leaf by finding its closest branch. Merges with its nearest leaf to create a parent node that encapsulates it.
+        /// </summary>
+        /// <param name="leafNodeIndex"></param>
         private void insertLeaf(int leafNodeIndex)
         {
             if (rootNodeIndex == AABBNode.NULL_NODE)
@@ -3058,7 +3729,10 @@ namespace ECS.Collision
             fixUpwardsTree(treeNodeIndex);
         }
 
-
+        /// <summary>
+        /// Removes a leaf and updates its grandparents (if any) with its children.
+        /// </summary>
+        /// <param name="leafNodeIndex"></param>
         private void removeLeaf(int leafNodeIndex)
         {
             if (leafNodeIndex == rootNodeIndex)
@@ -3100,7 +3774,11 @@ namespace ECS.Collision
 
             leafNode->ParentNodeIndex = AABBNode.NULL_NODE;
         }
-
+        /// <summary>
+        /// Updates an existing leaf with a new AABB.
+        /// </summary>
+        /// <param name="leafNodeIndex"></param>
+        /// <param name="newAaab"></param>
         private void updateLeaf(int leafNodeIndex, AABB newAaab)
         {
             AABBNode* node = nodes.ReadPointerAt(leafNodeIndex);
@@ -3113,8 +3791,10 @@ namespace ECS.Collision
             insertLeaf(leafNodeIndex);
         }
 
-
-
+        /// <summary>
+        /// Fixes the tree to represent any changed AABBs by merging them and setting the new parents' AABB to it.
+        /// </summary>
+        /// <param name="treeNodeIndex"></param>
         private void fixUpwardsTree(int treeNodeIndex)
         {
             while (treeNodeIndex != AABBNode.NULL_NODE)
@@ -3128,7 +3808,10 @@ namespace ECS.Collision
                 treeNodeIndex = treeNode->ParentNodeIndex;
             }
         }
-
+        /// <summary>
+        /// Insert a new object into the tree. Its pointer and its transform's AABB are saved to a new node.
+        /// </summary>
+        /// <param name="cObject"></param>
         public void InsertObject(CObject* cObject)
         {
             int nodeIndex = allocateNode();
@@ -3140,19 +3823,35 @@ namespace ECS.Collision
             insertLeaf(nodeIndex);
             map[cObject->ID] = nodeIndex;
         }
-        public void RemoveObject(CObject* cObject)
+        /// <summary>
+        /// Remove an object from the tree. This is more expensive if repeatedly called than if the dead object was left in and cleared out in a larger garbage collection later.
+        /// </summary>
+        /// <param name="cObject"></param>
+        public void RemoveObject(CObject cObject)
         {
-            int nodeIndex = map[cObject->ID];
-            removeLeaf(nodeIndex);
-            deallocateNode(nodeIndex);
-            map.Remove(cObject->ID);
+            if(map.ContainsKey(cObject.ID) is int _int && _int != -1)
+            {
+                int nodeIndex = _int;
+                removeLeaf(nodeIndex);
+                deallocateNode(nodeIndex);
+                map.Remove(cObject.ID);
+            }
         }
-
+        /// <summary>
+        /// Update an existing object within the tree with its new AABB.
+        /// </summary>
+        /// <param name="cObject"></param>
         public void UpdateObject(CObject* cObject)
         {
             int nodeIndex = map[cObject->ID];
             updateLeaf(nodeIndex, cObject->Meta->Get<CTransform>(transformDataTableIndex)->BoundingBox);
         }
+        /// <summary>
+        /// Return the first object that overlaps with this object.
+        /// </summary>
+        /// <param name="cObject"></param>
+        /// <param name="additionalPredicate"></param>
+        /// <returns></returns>
         public CObject QueryFirstOverlap(CObject cObject, Func<CObject, bool> additionalPredicate = null)
         {
             Stack<int> stack = new Stack<int>();
@@ -3185,6 +3884,12 @@ namespace ECS.Collision
 
             return CObject.Null;
         }
+        /// <summary>
+        /// Return all objects that overlap with this object.
+        /// </summary>
+        /// <param name="cObject"></param>
+        /// <param name="additionalPredicate"></param>
+        /// <returns></returns>
         public List<CObject> QueryOverlaps(CObject cObject, Func<CObject, bool> additionalPredicate = null)
         {
             List<CObject> overlaps = new List<CObject>();
@@ -3219,6 +3924,9 @@ namespace ECS.Collision
 
             return overlaps;
         }
+        /// <summary>
+        /// Disposes of the tree, deallocates nodes and sets all object colliders to "Not in the tree".
+        /// </summary>
         public void Dispose()
         {
             for(int i = 0; i < nodes.MaxSize; i++)
@@ -3308,6 +4016,10 @@ namespace ECS.UI
             needsUpdate = true;
             vertices = new LocalArray<Vertex>(String.Length * 6);
         }
+        /// <summary>
+        /// Clear the current text and change it to the new text
+        /// </summary>
+        /// <param name="new_text"></param>
         public void ChangeText(string new_text)
         {
             if (new_text.Length == String.Length && new_text.GetHashCode() == String.stringHash)
@@ -3317,6 +4029,10 @@ namespace ECS.UI
             vertices = new LocalArray<Vertex>(String.Length * 6);
             needsUpdate = true;
         }
+        /// <summary>
+        /// Update the text texture coords for each character in the string. Gets the font data/glyphs using SFML.
+        /// (partially taken from the SFML source code, not my function).
+        /// </summary>
         private void updateText()
         {
             if (!needsUpdate)
@@ -3419,7 +4135,11 @@ namespace ECS.Animations
             internalEntry = Animations.TryAddAnimation(name, frame_count);
             animState = CAnimationEntry.AnimState.Null;
         }
-
+        /// <summary>
+        /// Set the texture data to the animation texture data using the index. Does nothing if the index AND texture pointer match current animation state.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <param name="texture"></param>
         public void SetTextureDataTo(int index, ref CTexture texture)
         {
             if (animState.Index == index && animState.Entry == texture.TexturePtr)
@@ -3427,6 +4147,11 @@ namespace ECS.Animations
 
             Entry->SetTexture(index, ref texture, ref this);
         }
+        /// <summary>
+        /// Set the animation entry's data. This affects all animations that refer to this entry.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <param name="texture"></param>
         public void SetFrameDataTo(int index, ref CTexture texture)
         {
             Entry->SetFrame(index, ref texture);
@@ -3441,6 +4166,14 @@ namespace ECS.GarbageCollection
     /// </summary>
     public unsafe static class CGC
     {
+        /// <summary>
+        /// Similar to realloc. Moved here to separate it from CAllocation methods as it should not be used as one.
+        /// </summary>
+        /// <param name="block"></param>
+        /// <param name="size_of"></param>
+        /// <param name="original_size"></param>
+        /// <param name="new_size"></param>
+        /// <returns></returns>
         public static IntPtr ResizeEntireBlock(IntPtr block, int size_of, int original_size, int new_size)
         {
             var new_block = Malloc(size_of * new_size);
@@ -3455,7 +4188,7 @@ namespace ECS.Exceptions
 {
     using ECS.Logger;
     /// <summary>
-    /// Abstract, bae class for Exceptions in the engine. Used in conjunction with a logger to report why the engine crashed. Detailed, inherited exceptions allow for better debugging.
+    /// Base class for Exceptions in the engine. Used in conjunction with a logger to report why the engine crashed. Detailed, inherited exceptions allow for better debugging.
     /// </summary>
     public abstract class CoreException : Exception
     {
@@ -3568,7 +4301,7 @@ namespace ECS.Exceptions
 namespace ECS.Logger
 {
     /// <summary>
-    /// Logs information about the running engine. Used for statistics gathering and debugging. Only one logger can exist at once.
+    /// Logs information about the running engine. Used for statistics gathering and debugging. Only one logger can exist at once. Does nothing in Release builds.
     /// </summary>
     public class Logger
     {
@@ -3634,12 +4367,13 @@ namespace ECS.Logger
         }
         public void AddLog(LogItem item) => this.AddLog(item.ToString());
         public void AddLog(LogKey key, string name, string value) => this.AddLog(new LogItem(key, name, value));
+        internal static void CreateLogger(string filename) => Instance = new Logger(filename);
 
-        internal static void CreateLogger(string filename)
-        {
-            Instance = new Logger(filename);
-        }
-
+        /// <summary>
+        /// Display the results of the available logs. Shows Average, Lowest and Highest values for each entry type.
+        /// </summary>
+        /// <param name="inCurrentDirectory"></param>
+        /// <param name="otherPath"></param>
         public static void ReadAvailableLogs(bool inCurrentDirectory = true, string otherPath = "")
         {
             var path = inCurrentDirectory ? Directory.GetCurrentDirectory() : otherPath;
@@ -3726,18 +4460,17 @@ namespace ECS.Logger
                 Debug.Log(this);
         }
 
-        public DateTime ReturnDateTimeFromTimeStamp => new DateTime(TimeStamp);
-
         public override string ToString()
         {
             return Key.ToString() + SeparatorString + TimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
         }
 
-        public string ToHumanReadable()
-        {
-            return ReturnDateTimeFromTimeStamp.ToString() + SeparatorString + Name + SeparatorString + Value;
-        }
         private static readonly Dictionary<string, LogKey> EnumKeyDict = new Dictionary<string, LogKey>();
+        /// <summary>
+        /// Create a log item from a specific string. Will fail if string is not formatted correctly.
+        /// </summary>
+        /// <param name="loggedItem"></param>
+        /// <returns></returns>
         public static LogItem FromString(string loggedItem)
         {
             if (EnumKeyDict.Count == 0)
