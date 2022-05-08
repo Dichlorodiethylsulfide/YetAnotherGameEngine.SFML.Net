@@ -1,3 +1,22 @@
+/// This project requires the dotNet 3.1 runtime.
+/// 
+/// The .dll files can either be inluded in a self-contained package
+///     hostfxr.dll and the 'shared' folder should be placed alongside the executable
+/// OR
+/// the runtime can be installed to the host system
+///
+/// To check if installed on the host machine go to 'C:\Program Files\dotnet' and look for './host/fxr/3.1.xx/hostfxr.dll' and './shared/Microsoft.NETCore.App/3.1.xx/*.dll'
+/// 
+/// Downloadable from: https://dotnet.microsoft.com/en-us/download/dotnet/3.1 either the libraries/binaries themselves or the installer
+///
+/// If either the self-contained package or the machine installed files are present, the executable game (compiled from Game_Example) will run without errors.
+///
+/// The startup project should be set to "Game_Example" within Visual Studio (or similar IDE) otherwise the project will not compile
+/// as my engine and SFML are not an executables, only .dll libraries
+/// 
+/// Graphical warnings (related to OpenGL) may appear if the host machine's GPU is not sufficiently powerful enough, these do not affect this project though.
+/// 
+
 #define SEPARATE_RENDER_THREAD
 
 #define MULTI_THREAD_SUBSYSTEMS
@@ -2207,6 +2226,36 @@ namespace ECS.Library
         /// <param name="flag"></param>
         /// <returns></returns>
         public static bool IsEngineFlagSet(string flag) => MainEngine.setEngineFlags.Contains(flag);
+        /// <summary>
+        /// Get whether a commandline flag was set and the value it was set to. Requires the engine to exist.
+        /// </summary>
+        /// <param name="flag"></param>
+        /// <returns></returns>
+        public static CTuple<bool, int> IsEngineFlagSetWithValue(string flag)
+        {
+            for(var i = 0; i < MainEngine.setEngineFlags.Count; i++)
+            {
+                var split = MainEngine.setEngineFlags[i].Split('=');
+                if (split[0] == flag)
+                {
+                    return new CTuple<bool, int>(true, Convert.ToInt32(split[1]));
+                }
+            }
+            return new CTuple<bool, int>();
+        }
+        /// <summary>
+        /// Get whether a commandline flag was set and the value it was set to, returns the value or default (0) instead of a tuple. Requires the engine to exist.
+        /// </summary>
+        /// <param name="flag"></param>
+        /// <returns></returns>
+        public static int IsEngineFlagSetWithValueDefault(string flag)
+        {
+            if(IsEngineFlagSetWithValue(flag) is CTuple<bool, int> tuple && tuple.Item1)
+            {
+                return tuple.Item2;
+            }
+            return 0;
+        }
         /// <summary>
         /// Start a user-defined engine. The engineType must inherit from the base engine. Also passes any available engine flags and sets them as true.
         /// </summary>

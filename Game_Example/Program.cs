@@ -33,6 +33,10 @@ namespace Game_Example
                 {
                     ECS.Logger.Logger.ReadAvailableLogs();
                 }
+                else if(arg == "--help")
+                {
+                    Debug.Log("Commands:\n--help\tPrints this help string\n--set-flag\t Sets a single flag that can be checked while the engine is running\n--set-flags\tSets multiple flags, all string separated flags after '--set-flags' is included as a new flag\n--set-flag and --set-flags can include value setting with 'flag=integer' to assign a value within the engine.");
+                }
                 else if(arg == "--set-flag" && args.Length == 2)
                 {
                     Engine.Start(typeof(GameEngine), args[1]);
@@ -44,7 +48,7 @@ namespace Game_Example
                 }
                 else
                 {
-                    Debug.Log("Unknown Arg!");
+                    Debug.Log("Unknown Arg! Type --help for additional commands.");
                 }
             }
             else
@@ -84,6 +88,22 @@ namespace Game_Example
         {
             IsRenderingTest = IsEngineFlagSet("Rendering-Test");
             IsGameTest = IsEngineFlagSet("Game-Test") || !IsRenderingTest;
+
+            if(IsEngineFlagSetWithValue("SpawnCount") is CTuple<bool, int> tuple && tuple.Item1)
+            {
+                SpawnCounter = tuple.Item2;
+            }
+            else
+            {
+                if(IsRenderingTest)
+                {
+                    SpawnCounter = 100;
+                }
+                else
+                {
+                    SpawnCounter = 1;
+                }
+            }
 
             SpriteSheetTexture = CTexture.CreateSpriteSheet(FilePath.Get(@".\Resources\Placeholder\Block_SpriteSheet.png"), new Vector2u(32, 32));
             StartTexture = new CTexture(FilePath.Get(@".\Resources\Placeholder\StartButton.png"));
