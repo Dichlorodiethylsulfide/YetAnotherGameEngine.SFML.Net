@@ -340,7 +340,7 @@ namespace Game_Example
                 var enemy = CObject.New();
                 enemy.AddData(GameEngine.SpawnTexture.Modify((ref CTexture texture) => texture.SetColor(Color.Red)));
                 enemy.AddData(new CTransform(RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.X), RNG.Next(0, (int)Engine.EngineWindow.WindowDimensions.Y), 32, 32));
-                enemy.AddData(new CEnemyData(10, 0, 50));
+                enemy.AddData(new CEnemyData(10, 1, 50));
                 enemy.AddData(new CCollider());
                 enemy.AddData(new CString("Enemy"));
                 if(GameEngine.IsGameTest)
